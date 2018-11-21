@@ -60,6 +60,7 @@ import org.gradle.nativeplatform.test.cpp.internal.DefaultCppTestExecutable;
 import org.gradle.nativeplatform.test.cpp.internal.DefaultCppTestSuite;
 import org.gradle.nativeplatform.test.plugins.NativeTestingBasePlugin;
 import org.gradle.nativeplatform.test.tasks.RunTestExecutable;
+import org.gradle.util.CollectionUtils;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
@@ -70,6 +71,7 @@ import java.util.stream.Collectors;
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
 import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
+import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
 
 /**
  * A plugin that sets up the infrastructure for testing C++ binaries using a simple test executable.

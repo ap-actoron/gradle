@@ -16,7 +16,6 @@
 
 package org.gradle.language.cpp.plugins;
 
-import com.google.common.collect.ImmutableSet;
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Named;
@@ -67,6 +66,7 @@ import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
 import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
+import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
 
 /**
  * <p>A plugin that produces a native library from C++ source.</p>
@@ -118,12 +118,7 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                // Set default value to target machine
-                if (!library.getTargetMachines().isPresent()) {
-                    library.getTargetMachines().set(ImmutableSet.of(((DefaultTargetMachineFactory)targetMachineFactory).host()));
-                }
-                library.getTargetMachines().finalizeValue();
-                Set<TargetMachine> targetMachines = library.getTargetMachines().get();
+                Set<TargetMachine> targetMachines = setDefaultAndGetTargetMachineValues(library.getTargetMachines(), targetMachineFactory);
                 if (targetMachines.isEmpty()) {
                     throw new IllegalArgumentException("A target machine needs to be specified for the library.");
                 }

@@ -16,22 +16,17 @@
 
 package org.gradle.language.swift.plugins;
 
-import com.google.common.collect.ImmutableSet;
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.ConfigurationContainer;
-import org.gradle.api.attributes.AttributeContainer;
-import org.gradle.api.attributes.Usage;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.file.FileOperations;
 import org.gradle.api.internal.project.ProjectInternal;
-import org.gradle.api.model.ObjectFactory;
-import org.gradle.api.provider.Provider;
-import org.gradle.language.cpp.internal.DefaultUsageContext;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
+import org.gradle.language.nativeplatform.internal.BinaryBuilder;
 import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.Dimensions;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
@@ -39,22 +34,14 @@ import org.gradle.language.swift.SwiftApplication;
 import org.gradle.language.swift.SwiftExecutable;
 import org.gradle.language.swift.SwiftPlatform;
 import org.gradle.language.swift.internal.DefaultSwiftApplication;
-import org.gradle.nativeplatform.MachineArchitecture;
-import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
-import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
-import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
 import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.stream.Collectors;
 
-import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
-import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
-import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
+import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
 
 /**
  * <p>A plugin that produces an executable from Swift source.</p>
@@ -100,67 +87,32 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
         application.getModule().set(GUtil.toCamelCase(project.getName()));
 
         application.getTargetMachines().convention(Dimensions.getDefaultTargetMachines(targetMachineFactory));
+        application.getBinaries().whenElementKnown(SwiftExecutable.class, executable -> {
+            // Use the debug variant as the development binary
+            if (executable.isDebuggable()) {
+                application.getDevelopmentBinary().set(executable);
+            }
+        });
 
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                // Set default value to target machine
-                if (!application.getTargetMachines().isPresent()) {
-                    application.getTargetMachines().set(ImmutableSet.of(((DefaultTargetMachineFactory)targetMachineFactory).host()));
-                }
-                application.getTargetMachines().finalizeValue();
-                Set<TargetMachine> targetMachines = application.getTargetMachines().get();
+                Set<TargetMachine> targetMachines = setDefaultAndGetTargetMachineValues(application.getTargetMachines(), targetMachineFactory);
                 if (targetMachines.isEmpty()) {
                     throw new IllegalArgumentException("A target machine needs to be specified for the application.");
                 }
 
-                final ObjectFactory objectFactory = project.getObjects();
-                Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
-
-                for (BuildType buildType : BuildType.DEFAULT_BUILD_TYPES) {
-                    for (TargetMachine targetMachine : targetMachines) {
-                        String operatingSystemSuffix = createDimensionSuffix(targetMachine.getOperatingSystemFamily(), targetMachines.stream().map(TargetMachine::getOperatingSystemFamily).collect(Collectors.toSet()));
-                        String architectureSuffix = createDimensionSuffix(targetMachine.getArchitecture(), targetMachines.stream().map(TargetMachine::getArchitecture).collect(Collectors.toSet()));
-                        String variantName = buildType.getName() + operatingSystemSuffix + architectureSuffix;
-
-                        Provider<String> group = project.provider(new Callable<String>() {
-                            @Override
-                            public String call() throws Exception {
-                                return project.getGroup().toString();
-                            }
-                        });
-
-                        Provider<String> version = project.provider(new Callable<String>() {
-                            @Override
-                            public String call() throws Exception {
-                                return project.getVersion().toString();
-                            }
-                        });
-
-                        AttributeContainer runtimeAttributes = attributesFactory.mutable();
-                        runtimeAttributes.attribute(Usage.USAGE_ATTRIBUTE, runtimeUsage);
-                        runtimeAttributes.attribute(DEBUGGABLE_ATTRIBUTE, buildType.isDebuggable());
-                        runtimeAttributes.attribute(OPTIMIZED_ATTRIBUTE, buildType.isOptimized());
-                        runtimeAttributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily());
-                        runtimeAttributes.attribute(MachineArchitecture.ARCHITECTURE_ATTRIBUTE, targetMachine.getArchitecture());
-
-                        NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, application.getModule(), group, version, buildType.isDebuggable(), buildType.isOptimized(), targetMachine,
-                            null,
-                            new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes));
-
-                        if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(targetMachine.getOperatingSystemFamily().getName())) {
+                for (SwiftExecutable executable : (Set<SwiftExecutable>) new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
+                        .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
+                        .withTargetMachines(targetMachines)
+                        .registerBinaryTypeFactory(SwiftExecutable.class, (NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine) -> {
                             ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, targetMachine);
-
-                            SwiftExecutable executable = application.addExecutable(variantIdentity, buildType == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-
-                            // Use the debug variant as the development binary
-                            if (buildType == BuildType.DEBUG) {
-                                application.getDevelopmentBinary().set(executable);
-                            }
-                        }
-                    }
+                            return application.addExecutable(variantIdentity, buildType == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        })
+                        .build()
+                        .get()) {
+                    application.getBinaries().add(executable);
                 }
-
                 // Configure the binaries
                 application.getBinaries().realizeNow();
             }

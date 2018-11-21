@@ -202,12 +202,16 @@ abstract class AbstractSwiftComponentIntegrationTest extends AbstractNativeLangu
 
 
     protected String getCurrentHostOperatingSystemFamilyDsl() {
+<<<<<<< HEAD
         String osFamily = DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName()
         if (osFamily == OperatingSystemFamily.MACOS) {
             return "macOS"
         } else {
             return osFamily
         }
+=======
+        return DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName() + "()"
+>>>>>>> Move `TargetMachineFactory#host()` to internal API
     }
 
     abstract String getDevelopmentBinaryCompileTask()

@@ -16,6 +16,7 @@
 
 package org.gradle.language.swift.plugins;
 
+import com.google.common.collect.ImmutableSet;
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
@@ -42,6 +43,7 @@ import org.gradle.nativeplatform.MachineArchitecture;
 import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
+import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
 import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 import org.gradle.util.GUtil;
 
@@ -102,6 +104,10 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
+                // Set default value to target machine
+                if (!application.getTargetMachines().isPresent()) {
+                    application.getTargetMachines().set(ImmutableSet.of(((DefaultTargetMachineFactory)targetMachineFactory).host()));
+                }
                 application.getTargetMachines().finalizeValue();
                 Set<TargetMachine> targetMachines = application.getTargetMachines().get();
                 if (targetMachines.isEmpty()) {

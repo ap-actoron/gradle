@@ -161,6 +161,10 @@ abstract class AbstractCppComponentIntegrationTest extends AbstractNativeLanguag
         }
     }
 
+    protected String getCurrentHostOperatingSystemFamilyDsl() {
+        return DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName() + "()"
+    }
+
     protected abstract SourceElement getComponentUnderTest()
 
     protected abstract List<String> getTasksToAssembleDevelopmentBinary(String variant = "")

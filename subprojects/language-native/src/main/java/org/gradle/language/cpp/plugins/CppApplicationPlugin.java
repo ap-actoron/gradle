@@ -16,6 +16,7 @@
 
 package org.gradle.language.cpp.plugins;
 
+import com.google.common.collect.ImmutableSet;
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
@@ -95,6 +96,10 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
+                // Set default value to target machine
+                if (!application.getTargetMachines().isPresent()) {
+                    application.getTargetMachines().set(ImmutableSet.of(((DefaultTargetMachineFactory)targetMachineFactory).host()));
+                }
                 application.getTargetMachines().finalizeValue();
                 Set<TargetMachine> targetMachines = application.getTargetMachines().get();
                 if (targetMachines.isEmpty()) {

@@ -21,8 +21,6 @@ import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.attributes.AttributeContainer;
-import org.gradle.api.attributes.Usage;
 import org.gradle.api.internal.artifacts.dsl.LazyPublishArtifact;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.file.FileOperations;
@@ -39,20 +37,15 @@ import org.gradle.language.cpp.CppLibrary;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.CppSharedLibrary;
 import org.gradle.language.cpp.internal.DefaultCppLibrary;
-import org.gradle.language.cpp.internal.DefaultUsageContext;
-import org.gradle.language.cpp.internal.MainLibraryVariant;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.BinaryBuilder;
 import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.nativeplatform.Linkage;
-import org.gradle.nativeplatform.MachineArchitecture;
-import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
-import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
 import java.io.File;
@@ -143,7 +136,8 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                     throw new IllegalArgumentException("A linkage needs to be specified for the library.");
                 }
 
-                for (CppBinary binary : new BinaryBuilder<CppBinary>(project, attributesFactory)
+
+                BinaryBuilder.Result binaryResult = new BinaryBuilder<CppBinary>(project, attributesFactory)
                         .withDimension(
                                 BinaryBuilder.newDimension(BuildType.class)
                                         .withValues(BuildType.DEFAULT_BUILD_TYPES)
@@ -177,68 +171,12 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                             }
                             throw new IllegalArgumentException("Invalid linkage");
                         })
-                        .build()
-                        .get()) {
-                    library.getBinaries().add(binary);
-                }
-
-                Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
-                Usage linkUsage = objectFactory.named(Usage.class, Usage.NATIVE_LINK);
-
-                for (BuildType buildType : BuildType.DEFAULT_BUILD_TYPES) {
-                    for (TargetMachine targetMachine : targetMachines) {
-                        for (Linkage linkage : linkages) {
-
-                            String operatingSystemSuffix = createDimensionSuffix(targetMachine.getOperatingSystemFamily(), targetMachines.stream().map(TargetMachine::getOperatingSystemFamily).collect(Collectors.toSet()));
-                            String architectureSuffix = createDimensionSuffix(targetMachine.getArchitecture(), targetMachines.stream().map(TargetMachine::getArchitecture).collect(Collectors.toSet()));
-                            String linkageSuffix = createDimensionSuffix(linkage, linkages);
-                            String variantName = buildType.getName() + linkageSuffix + operatingSystemSuffix + architectureSuffix;
-
-                            Provider<String> group = project.provider(new Callable<String>() {
-                                @Override
-                                public String call() throws Exception {
-                                    return project.getGroup().toString();
-                                }
-                            });
-
-                            Provider<String> version = project.provider(new Callable<String>() {
-                                @Override
-                                public String call() throws Exception {
-                                    return project.getVersion().toString();
-                                }
-                            });
-
-                            AttributeContainer runtimeAttributes = attributesFactory.mutable();
-                            runtimeAttributes.attribute(Usage.USAGE_ATTRIBUTE, runtimeUsage);
-                            runtimeAttributes.attribute(DEBUGGABLE_ATTRIBUTE, buildType.isDebuggable());
-                            runtimeAttributes.attribute(OPTIMIZED_ATTRIBUTE, buildType.isOptimized());
-                            runtimeAttributes.attribute(LINKAGE_ATTRIBUTE, linkage);
-                            runtimeAttributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily());
-                            runtimeAttributes.attribute(MachineArchitecture.ARCHITECTURE_ATTRIBUTE, targetMachine.getArchitecture());
-
-                            AttributeContainer linkAttributes = attributesFactory.mutable();
-                            linkAttributes.attribute(Usage.USAGE_ATTRIBUTE, linkUsage);
-                            linkAttributes.attribute(DEBUGGABLE_ATTRIBUTE, buildType.isDebuggable());
-                            linkAttributes.attribute(OPTIMIZED_ATTRIBUTE, buildType.isOptimized());
-                            linkAttributes.attribute(LINKAGE_ATTRIBUTE, linkage);
-                            linkAttributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily());
-                            linkAttributes.attribute(MachineArchitecture.ARCHITECTURE_ATTRIBUTE, targetMachine.getArchitecture());
-
-                            NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, library.getBaseName(), group, version, buildType.isDebuggable(), buildType.isOptimized(), targetMachine,
-                                new DefaultUsageContext(variantName + "Link", linkUsage, linkAttributes),
-                                new DefaultUsageContext(variantName + "Runtime", runtimeUsage, runtimeAttributes));
-
-                            if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(targetMachine.getOperatingSystemFamily().getName())) {
-                                // Do nothing...
-                            } else {
-                                // Known, but not buildable
-                                library.getMainPublication().addVariant(variantIdentity);
-                            }
-                        }
-                    }
-                }
-
-                final MainLibraryVariant mainVariant = library.getMainPublication();
+                        .build();
+                library.getBinaries().addAll(binaryResult.getBinaries());
+                ((Set<NativeVariantIdentity>)binaryResult.getNonBuildableVariants().get()).forEach(variantIdentity -> {
+                    // Known, but not buildable
+                    library.getMainPublication().addVariant(variantIdentity);
+                });
 
                 final Configuration apiElements = library.getApiElements();
                 // TODO - deal with more than one header dir, e.g. generated public headers
@@ -266,7 +204,7 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                                 headersZip.getArchiveFileName().set("cpp-api-headers.zip");
                             }
                         });
-                        mainVariant.addArtifact(new LazyPublishArtifact(headersZip));
+                        library.getMainPublication().addArtifact(new LazyPublishArtifact(headersZip));
                     }
                 });
 

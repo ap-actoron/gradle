@@ -122,52 +122,83 @@ public class BinaryBuilder<T> {
         return this;
     }
 
-    public Provider<Set<T>> build() {
-        return project.provider(() -> {
-            Set<T> binaries = Sets.newHashSet();
+    public class Result {
+        public Provider<? extends Set<T>> getBinaries() {
+            return project.provider(() -> {
+                Set<T> binaries = Sets.newHashSet();
+
+                forEach(context -> {
+                    NativeVariantIdentity variantIdentity = newVariantIdentity(context);
+
+                    if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(context.get(TargetMachine.class).get().getOperatingSystemFamily().getName())) {
+                        binaries.add(factory.create(variantIdentity, context));
+                    }
+                });
+
+                return binaries;
+            });
+        }
+
+        public Provider<? extends Set<NativeVariantIdentity>> getNonBuildableVariants() {
+            return project.provider(() -> {
+                Set<NativeVariantIdentity> variantIdentities = Sets.newHashSet();
+
+                forEach(context -> {
+                    NativeVariantIdentity variantIdentity = newVariantIdentity(context);
+
+                    if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(context.get(TargetMachine.class).get().getOperatingSystemFamily().getName())) {
+                        // Do nothing...
+                    } else {
+                        variantIdentities.add(variantIdentity);
+                    }
+                });
+
+                return variantIdentities;
+            });
+        }
+
+        private NativeVariantIdentity newVariantIdentity(DefaultDimensionContext context) {
             ObjectFactory objectFactory = project.getObjects();
             Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
             Usage linkUsage = objectFactory.named(Usage.class, Usage.NATIVE_LINK);
 
-            forEach(context -> {
-                String variantName = context.getName();
+            String variantName = context.getName();
 
-                Provider<String> group = project.provider(new Callable<String>() {
-                    @Override
-                    public String call() throws Exception {
-                        return project.getGroup().toString();
-                    }
-                });
-
-                Provider<String> version = project.provider(new Callable<String>() {
-                    @Override
-                    public String call() throws Exception {
-                        return project.getVersion().toString();
-                    }
-                });
-
-                AttributeContainer runtimeAttributes = attributesFactory.mutable(context.getAttributes());
-                runtimeAttributes.attribute(Usage.USAGE_ATTRIBUTE, runtimeUsage);
-
-                DefaultUsageContext runtimeUsageContext = new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes);
-
-                DefaultUsageContext linkUsageContext = null;
-                if (context.get(Linkage.class).isPresent()) {
-                    AttributeContainer linkAttributes = attributesFactory.mutable(context.getAttributes());
-                    linkAttributes.attribute(Usage.USAGE_ATTRIBUTE, linkUsage);
-
-                    linkUsageContext = new DefaultUsageContext(variantName + "-link", linkUsage, linkAttributes);
-                }
-
-                NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, baseName, group, version, context.get(BuildType.class).get().isDebuggable(), context.get(BuildType.class).get().isOptimized(), context.get(TargetMachine.class).get(), linkUsageContext, runtimeUsageContext);
-
-                if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(context.get(TargetMachine.class).get().getOperatingSystemFamily().getName())) {
-                    binaries.add(factory.create(variantIdentity, context));
+            Provider<String> group = project.provider(new Callable<String>() {
+                @Override
+                public String call() throws Exception {
+                    return project.getGroup().toString();
                 }
             });
 
-            return binaries;
-        });
+            Provider<String> version = project.provider(new Callable<String>() {
+                @Override
+                public String call() throws Exception {
+                    return project.getVersion().toString();
+                }
+            });
+
+            AttributeContainer runtimeAttributes = attributesFactory.mutable(context.getAttributes());
+            runtimeAttributes.attribute(Usage.USAGE_ATTRIBUTE, runtimeUsage);
+
+            DefaultUsageContext runtimeUsageContext = new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes);
+
+            DefaultUsageContext linkUsageContext = null;
+            if (context.get(Linkage.class).isPresent()) {
+                AttributeContainer linkAttributes = attributesFactory.mutable(context.getAttributes());
+                linkAttributes.attribute(Usage.USAGE_ATTRIBUTE, linkUsage);
+
+                linkUsageContext = new DefaultUsageContext(variantName + "-link", linkUsage, linkAttributes);
+            }
+
+            NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, baseName, group, version, context.get(BuildType.class).get().isDebuggable(), context.get(BuildType.class).get().isOptimized(), context.get(TargetMachine.class).get(), linkUsageContext, runtimeUsageContext);
+
+            return variantIdentity;
+        }
+    }
+
+    public Result build() {
+        return new Result();
     }
 
     private static class DimensionValues<I> {

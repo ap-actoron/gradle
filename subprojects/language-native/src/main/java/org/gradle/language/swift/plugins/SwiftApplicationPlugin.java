@@ -107,7 +107,7 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
                     throw new IllegalArgumentException("A target machine needs to be specified for the application.");
                 }
 
-                for (SwiftExecutable binary : new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
+                BinaryBuilder.Result builderResult = new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
                         .withDimension(
                                 BinaryBuilder.newDimension(BuildType.class)
                                         .withValues(BuildType.DEFAULT_BUILD_TYPES)
@@ -130,10 +130,9 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
                             ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
                             return application.addExecutable(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
                         })
-                        .build()
-                        .get()) {
-                    application.getBinaries().add(binary);
-                }
+                        .build();
+                application.getBinaries().addAll(builderResult.getBinaries());
+
                 // Configure the binaries
                 application.getBinaries().realizeNow();
             }

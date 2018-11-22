@@ -124,7 +124,7 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                     throw new IllegalArgumentException("A linkage needs to be specified for the library.");
                 }
 
-                for (SwiftBinary binary : new BinaryBuilder<SwiftBinary>(project, attributesFactory)
+                BinaryBuilder.Result binaryResult = new BinaryBuilder<SwiftBinary>(project, attributesFactory)
                         .withDimension(
                                 BinaryBuilder.newDimension(BuildType.class)
                                         .withValues(BuildType.DEFAULT_BUILD_TYPES)
@@ -158,10 +158,8 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                             }
                             throw new IllegalArgumentException("Invalid linkage");
                         })
-                        .build()
-                        .get()) {
-                    library.getBinaries().add(binary);
-                }
+                        .build();
+                library.getBinaries().addAll(binaryResult.getBinaries());
 
                 library.getBinaries().whenElementKnown(SwiftSharedLibrary.class, new Action<SwiftSharedLibrary>() {
                     @Override

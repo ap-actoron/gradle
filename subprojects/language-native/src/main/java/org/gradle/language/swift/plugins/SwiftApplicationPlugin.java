@@ -41,7 +41,12 @@ import org.gradle.util.GUtil;
 import javax.inject.Inject;
 import java.util.Set;
 
+import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
+import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
+import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
+import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
+import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
 
 /**
  * <p>A plugin that produces an executable from Swift source.</p>
@@ -103,8 +108,24 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
                 }
 
                 for (SwiftExecutable binary : new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
-                        .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
-                        .withTargetMachines(targetMachines)
+                        .withDimension(
+                                BinaryBuilder.newDimension(BuildType.class)
+                                        .withValues(BuildType.DEFAULT_BUILD_TYPES)
+                                        .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
+                                        .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
+                                        .build())
+                        .withDimension(
+                                BinaryBuilder.newDimension(TargetMachine.class)
+                                        .withValues(targetMachines)
+                                        .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
+                                        .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
+                                        .withName(it -> {
+                                            String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
+                                            String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
+                                            return operatingSystemSuffix + architectureSuffix;
+                                        })
+                                        .build())
+                        .withBaseName(application.getModule())
                         .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
                             ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
                             return application.addExecutable(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());

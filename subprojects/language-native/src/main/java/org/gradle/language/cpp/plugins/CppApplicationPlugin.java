@@ -36,7 +36,6 @@ import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.BinaryBuilder;
 import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
-import org.gradle.nativeplatform.MachineArchitecture;
 import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
@@ -53,6 +52,8 @@ import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
 import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
+import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
+import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
 
 /**
  * <p>A plugin that produces a native application from C++ source.</p>
@@ -114,8 +115,24 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
                 }
 
                 for (CppExecutable binary : new BinaryBuilder<CppExecutable>(project, attributesFactory)
-                        .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
-                        .withTargetMachines(targetMachines)
+                        .withDimension(
+                                BinaryBuilder.newDimension(BuildType.class)
+                                        .withValues(BuildType.DEFAULT_BUILD_TYPES)
+                                        .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
+                                        .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
+                                        .build())
+                        .withDimension(
+                                BinaryBuilder.newDimension(TargetMachine.class)
+                                        .withValues(targetMachines)
+                                        .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
+                                        .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
+                                        .withName(it -> {
+                                            String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
+                                            String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
+                                            return operatingSystemSuffix + architectureSuffix;
+                                        })
+                                        .build())
+                        .withBaseName(application.getBaseName())
                         .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
                             ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, context.get(TargetMachine.class).get());
                             return application.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
@@ -151,7 +168,7 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
                         runtimeAttributes.attribute(DEBUGGABLE_ATTRIBUTE, buildType.isDebuggable());
                         runtimeAttributes.attribute(OPTIMIZED_ATTRIBUTE, buildType.isOptimized());
                         runtimeAttributes.attribute(OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily());
-                        runtimeAttributes.attribute(MachineArchitecture.ARCHITECTURE_ATTRIBUTE, targetMachine.getArchitecture());
+                        runtimeAttributes.attribute(ARCHITECTURE_ATTRIBUTE, targetMachine.getArchitecture());
 
                         NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, application.getBaseName(), group, version, buildType.isDebuggable(), buildType.isOptimized(), targetMachine,
                             null,

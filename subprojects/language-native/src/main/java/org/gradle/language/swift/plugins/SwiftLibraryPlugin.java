@@ -55,7 +55,10 @@ import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
+import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
+import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
+import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
 
 /**
  * <p>A plugin that produces a shared library from Swift source.</p>
@@ -122,9 +125,29 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                 }
 
                 for (SwiftBinary binary : new BinaryBuilder<SwiftBinary>(project, attributesFactory)
-                        .withBuildTypes(org.gradle.language.nativeplatform.internal.BuildType.DEFAULT_BUILD_TYPES)
-                        .withTargetMachines(targetMachines)
-                        .withLinkages(linkages)
+                        .withDimension(
+                                BinaryBuilder.newDimension(BuildType.class)
+                                        .withValues(BuildType.DEFAULT_BUILD_TYPES)
+                                        .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
+                                        .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
+                                        .build())
+                        .withDimension(
+                                BinaryBuilder.newDimension(Linkage.class)
+                                        .withValues(linkages)
+                                        .attribute(LINKAGE_ATTRIBUTE, it -> it)
+                                        .build())
+                        .withDimension(
+                                BinaryBuilder.newDimension(TargetMachine.class)
+                                        .withValues(targetMachines)
+                                        .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
+                                        .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
+                                        .withName(it -> {
+                                            String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
+                                            String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
+                                            return operatingSystemSuffix + architectureSuffix;
+                                        })
+                                        .build())
+                        .withBaseName(library.getModule())
                         .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
                             ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
 

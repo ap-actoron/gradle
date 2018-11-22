@@ -16,10 +16,13 @@
 
 package org.gradle.language.nativeplatform.internal;
 
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.commons.lang.StringUtils;
+import org.gradle.api.Named;
 import org.gradle.api.Project;
+import org.gradle.api.attributes.Attribute;
 import org.gradle.api.attributes.AttributeContainer;
 import org.gradle.api.attributes.Usage;
 import org.gradle.api.internal.attributes.AttributeContainerInternal;
@@ -38,59 +41,75 @@ import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import java.util.Collection;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
-import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
-import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
 import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
-import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
-import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
 
 public class BinaryBuilder<T> {
     private final Project project;
     private final ImmutableAttributesFactory attributesFactory;
     private Provider<String> baseName = Providers.notDefined();
     private BinaryFactory<T> factory;
-
-    // Dimensions
-    private Collection<BuildType> buildTypes = Collections.emptySet();
-    private Collection<TargetMachine> targetMachines = Collections.emptySet();
-    private Collection<Linkage> linkages = Collections.emptySet();
-
-//    private List<Dimension<?>> dimensions = Lists.newArrayList();
+    private List<DimensionValues<?>> dimensions = Lists.newArrayList();
 
     public BinaryBuilder(Project project, ImmutableAttributesFactory attributesFactory) {
         this.project = project;
         this.attributesFactory = attributesFactory;
     }
 
-//    public <I> BinaryBuilder<T> withDimension(Class<I> type, Collection<I> elements) {
-//        dimensions.add(new Dimension<I>(type, elements));
-//        return this;
-//    }
-
-    public BinaryBuilder<T> withBuildTypes(Collection<BuildType> buildTypes) {
-        this.buildTypes = buildTypes;
+    public <I> BinaryBuilder<T> withDimension(DimensionValues<I> dimension) {
+        dimensions.add(dimension);
         return this;
     }
 
-    public BinaryBuilder<T> withTargetMachines(Set<TargetMachine> targetMachines) {
-        this.targetMachines = targetMachines;
-        return this;
+    public static <I> DimensionBuilder<I> newDimension(Class<I> type) {
+        return new DimensionBuilder<>(type);
     }
 
-    public BinaryBuilder<T> withLinkages(Collection<Linkage> linkages) {
-        this.linkages = linkages;
-        return this;
+    public static class DimensionBuilder<I> {
+        private final Class<I> type;
+        private Collection<I> values;
+        private Function<I, String> toStringSupplier = it -> {
+            if (it instanceof Named) {
+                return createDimensionSuffix((Named) it, values);
+            }
+            throw new IllegalArgumentException("Can't to string without name");
+        };
+        private final Map<Attribute<Object>, Function<I, Object>> attributes = new HashMap<>();
+
+        public DimensionBuilder(Class<I> type) {
+            this.type = type;
+        }
+
+        public DimensionBuilder<I> withValues(Collection<I> values) {
+            this.values = values;
+            return this;
+        }
+
+        public <U> DimensionBuilder<I> attribute(Attribute<U> key, Function<I, U> supplier) {
+            attributes.put(Cast.uncheckedCast(key), Cast.uncheckedCast(supplier));
+            return this;
+        }
+
+        public DimensionBuilder<I> withName(Function<I, String> supplier) {
+            toStringSupplier = supplier;
+            return this;
+        }
+
+        public DimensionValues<I> build() {
+            return new DimensionValues<I>(type, values, toStringSupplier, attributes);
+        }
     }
 
     public BinaryBuilder<T> withBaseName(Provider<String> baseName) {
@@ -151,17 +170,42 @@ public class BinaryBuilder<T> {
         });
     }
 
-    private class Dimension<T> {
-        private final Class<T> type;
-        private final Optional<T> value;
-        private final Function<T, String> toString;
-        private final ImmutableAttributes attributes;
+    private static class DimensionValues<I> {
+        private final Class<I> type;
+        private final Collection<I> values;
+        private final Function<I, String> toStringSupplier;
+        private final Map<Attribute<Object>, Function<I, Object>> attributes;
 
-        Dimension(Class<T> type, Optional<T> value) {
-            this(type, value, it -> { throw new RuntimeException("No value"); }, ImmutableAttributes.EMPTY);
+        DimensionValues(Class<I> type, Collection<I> values, Function<I, String> toStringSupplier, Map<Attribute<Object>, Function<I, Object>> attributes) {
+            this.type = type;
+            this.values = values;
+            this.toStringSupplier = toStringSupplier;
+            this.attributes = attributes;
+        }
+
+        void forEach(DefaultDimensionContext context, Queue<DimensionValues<?>> dimensions, Consumer<DefaultDimensionContext> action) {
+            if (values.isEmpty()) {
+                BinaryBuilder.forEach(context, dimensions, action);
+            } else {
+                values.stream().map(it -> Optional.of(it)).forEach(it -> {
+                    context.values.put(type, new Dimension<I>(type, it, toStringSupplier, attributes));
+                    BinaryBuilder.forEach(context, dimensions, action);
+                });
+            }
+        }
+    }
+
+    private static class Dimension<I> {
+        private final Class<I> type;
+        private final Optional<I> value;
+        private final Function<I, String> toString;
+        private final Map<Attribute<Object>, Function<I, Object>> attributes;
+
+        Dimension(Class<I> type, Optional<I> value) {
+            this(type, value, it -> { throw new RuntimeException("No value"); }, Maps.newHashMap());
 
         }
-        Dimension(Class<T> type, Optional<T> value, Function<T, String> toString, ImmutableAttributes attributes) {
+        Dimension(Class<I> type, Optional<I> value, Function<I, String> toString, Map<Attribute<Object>, Function<I, Object>> attributes) {
             this.type = type;
             this.value = value;
             this.toString = toString;
@@ -175,8 +219,8 @@ public class BinaryBuilder<T> {
             return "";
         }
 
-        public ImmutableAttributes getAttributes() {
-            return attributes;
+        public Map<Attribute<Object>, Object> getAttributes() {
+            return attributes.entrySet().stream().collect(Collectors.toMap(Map.Entry::getKey, it -> it.getValue().apply(value.get())));
         }
     }
 
@@ -184,7 +228,7 @@ public class BinaryBuilder<T> {
         <I> Optional<I> get(Class<I> type);
     }
 
-    private class DefaultDimensionContext implements DimensionContext{
+    private static class DefaultDimensionContext implements DimensionContext{
         private final ImmutableAttributesFactory attributesFactory;
         Map<Class<?>, Dimension<?>> values = new LinkedHashMap<>();
 
@@ -193,7 +237,10 @@ public class BinaryBuilder<T> {
         }
 
         public <I> Optional<I> get(Class<I> type) {
-            return Cast.uncheckedCast(values.getOrDefault(type, new Dimension<I>(type, Optional.empty())).value);
+            if (values.containsKey(type)) {
+                return Cast.uncheckedCast(values.get(type).value);
+            }
+            return Optional.empty();
         }
 
         String getName() {
@@ -208,41 +255,34 @@ public class BinaryBuilder<T> {
             ImmutableAttributes result = ImmutableAttributes.EMPTY;
             for (Dimension<?> dimension : values.values()) {
                 try {
-                    result = attributesFactory.safeConcat(result, dimension.getAttributes());
+                    result = attributesFactory.safeConcat(result, toAttributes(dimension.getAttributes()));
                 } catch (AttributeMergingException e) {
                     throw UncheckedException.throwAsUncheckedException(e);
                 }
             }
             return result;
         }
+
+        private ImmutableAttributes toAttributes(Map<Attribute<Object>, Object> attributes) {
+            AttributeContainerInternal result = attributesFactory.mutable();
+            attributes.entrySet().forEach(it -> {
+                result.attribute(it.getKey(), it.getValue());
+            });
+            return result.asImmutable();
+        }
+    }
+
+    private static void forEach(DefaultDimensionContext context, Queue<DimensionValues<?>> dimensions, Consumer<DefaultDimensionContext> action) {
+        if (dimensions.isEmpty()) {
+            action.accept(context);
+        } else {
+            dimensions.remove().forEach(context, new LinkedList<>(dimensions), action);
+        }
     }
 
     private void forEach(Consumer<DefaultDimensionContext> action) {
-        for (BuildType buildType : buildTypes) {
-            for (TargetMachine targetMachine : targetMachines) {
-                for (Optional<Linkage> linkage : toOptionals(linkages)) {
-                    DefaultDimensionContext context = new DefaultDimensionContext(attributesFactory);
-                    context.values.put(BuildType.class, new Dimension<BuildType>(BuildType.class, Optional.of(buildType), it -> StringUtils.capitalize(it.getName()), ((AttributeContainerInternal)attributesFactory.mutable().attribute(DEBUGGABLE_ATTRIBUTE, buildType.isDebuggable()).attribute(OPTIMIZED_ATTRIBUTE, buildType.isOptimized())).asImmutable()));
-                    if (linkage.isPresent()) {
-                        context.values.put(Linkage.class, new Dimension<Linkage>(Linkage.class, linkage, it-> createDimensionSuffix(linkage, linkages), ((AttributeContainerInternal)attributesFactory.mutable().attribute(LINKAGE_ATTRIBUTE, linkage.get())).asImmutable()));
-                    }
-                    context.values.put(TargetMachine.class, new Dimension<TargetMachine>(TargetMachine.class, Optional.of(targetMachine), it -> {
-                        String operatingSystemSuffix = createDimensionSuffix(targetMachine.getOperatingSystemFamily(), targetMachines);
-                        String architectureSuffix = createDimensionSuffix(targetMachine.getArchitecture(), targetMachines);
-                        return operatingSystemSuffix + architectureSuffix;
-                    }, ((AttributeContainerInternal)attributesFactory.mutable().attribute(OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily()).attribute(ARCHITECTURE_ATTRIBUTE, targetMachine.getArchitecture())).asImmutable()));
-
-                    action.accept(context);
-                }
-            }
-        }
-    }
-
-    private static <E> Collection<Optional<E>> toOptionals(Collection<E> collection) {
-        if (collection.isEmpty()) {
-            return ImmutableSet.of(Optional.empty());
-        }
-        return collection.stream().map(it -> Optional.of(it)).collect(Collectors.toSet());
+        DefaultDimensionContext context = new DefaultDimensionContext(attributesFactory);
+        forEach(context, new LinkedList<>(dimensions), action);
     }
 
     public interface BinaryFactory<T> {

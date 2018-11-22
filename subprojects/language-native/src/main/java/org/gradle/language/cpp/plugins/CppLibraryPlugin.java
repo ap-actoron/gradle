@@ -18,7 +18,6 @@ package org.gradle.language.cpp.plugins;
 
 import org.gradle.api.Action;
 import org.gradle.api.Incubating;
-import org.gradle.api.Named;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
@@ -35,15 +34,17 @@ import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.bundling.Zip;
+import org.gradle.language.cpp.CppBinary;
 import org.gradle.language.cpp.CppLibrary;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.CppSharedLibrary;
-import org.gradle.language.cpp.CppStaticLibrary;
 import org.gradle.language.cpp.internal.DefaultCppLibrary;
 import org.gradle.language.cpp.internal.DefaultUsageContext;
 import org.gradle.language.cpp.internal.MainLibraryVariant;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
+import org.gradle.language.nativeplatform.internal.BinaryBuilder;
+import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.MachineArchitecture;
@@ -55,8 +56,7 @@ import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
 import java.io.File;
-import java.util.Arrays;
-import java.util.Collection;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -114,6 +114,19 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
         library.getBaseName().set(project.getName());
 
         library.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
+        library.getBinaries().whenElementKnown(binary -> {
+            if (binary instanceof CppSharedLibrary && !binary.isOptimized()) {
+                // Use the debug shared library as the development binary
+                library.getDevelopmentBinary().set(binary);
+            } else if (!library.getLinkage().get().contains(Linkage.SHARED) && !binary.isOptimized()) {
+                // Use the debug static library as the development binary
+                library.getDevelopmentBinary().set(binary);
+            }
+        });
+
+        library.getBinaries().whenElementKnown(binary -> {
+            library.getMainPublication().addVariant(binary);
+        });
 
         project.afterEvaluate(new Action<Project>() {
             @Override
@@ -127,6 +140,25 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                 Set<Linkage> linkages = library.getLinkage().get();
                 if (linkages.isEmpty()) {
                     throw new IllegalArgumentException("A linkage needs to be specified for the library.");
+                }
+
+                for (CppBinary binary : new BinaryBuilder<CppBinary>(project, attributesFactory)
+                        .withBuildTypes(org.gradle.language.nativeplatform.internal.BuildType.DEFAULT_BUILD_TYPES)
+                        .withTargetMachines(targetMachines)
+                        .withLinkages(linkages)
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
+                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, targetMachine);
+
+                            if (linkage.get().equals(Linkage.SHARED)) {
+                                return library.addSharedLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                            } else if (linkage.get().equals(Linkage.STATIC)) {
+                                return library.addStaticLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                            }
+                            throw new IllegalArgumentException("Invalid linkage");
+                        })
+                        .build()
+                        .get()) {
+                    library.getBinaries().add(binary);
                 }
 
                 Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
@@ -176,24 +208,7 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                                 new DefaultUsageContext(variantName + "Runtime", runtimeUsage, runtimeAttributes));
 
                             if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(targetMachine.getOperatingSystemFamily().getName())) {
-                                ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, targetMachine);
-
-                                if (linkage == Linkage.SHARED) {
-                                    CppSharedLibrary sharedLibrary = library.addSharedLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                                    library.getMainPublication().addVariant(sharedLibrary);
-                                    // Use the debug shared library as the development binary
-                                    if (shouldPrefer(buildType, targetMachine, library)) {
-                                        library.getDevelopmentBinary().set(sharedLibrary);
-                                    }
-                                } else {
-                                    CppStaticLibrary staticLibrary = library.addStaticLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                                    library.getMainPublication().addVariant(staticLibrary);
-                                    if (!linkages.contains(Linkage.SHARED) && shouldPrefer(buildType, targetMachine, library)) {
-                                        // Use the debug static library as the development binary
-                                        library.getDevelopmentBinary().set(staticLibrary);
-                                    }
-                                }
-
+                                // Do nothing...
                             } else {
                                 // Known, but not buildable
                                 library.getMainPublication().addVariant(variantIdentity);
@@ -241,34 +256,5 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
 
     private boolean shouldPrefer(BuildType buildType, TargetMachine targetMachine, CppLibrary library) {
         return buildType == BuildType.DEBUG && (targetMachine.getArchitecture().equals(((DefaultTargetMachineFactory)targetMachineFactory).host().getArchitecture()) || !library.getDevelopmentBinary().isPresent());
-    }
-
-    private static final class BuildType implements Named {
-        private static final BuildType DEBUG = new BuildType("debug", true, false);
-        private static final BuildType RELEASE = new BuildType("release", true, true);
-        public static final Collection<BuildType> DEFAULT_BUILD_TYPES = Arrays.asList(DEBUG, RELEASE);
-
-        private final boolean debuggable;
-        private final boolean optimized;
-        private final String name;
-
-        private BuildType(String name, boolean debuggable, boolean optimized) {
-            this.debuggable = debuggable;
-            this.optimized = optimized;
-            this.name = name;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        public boolean isDebuggable() {
-            return debuggable;
-        }
-
-        public boolean isOptimized() {
-            return optimized;
-        }
     }
 }

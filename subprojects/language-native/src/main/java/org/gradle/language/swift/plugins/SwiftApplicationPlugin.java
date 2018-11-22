@@ -34,11 +34,13 @@ import org.gradle.language.swift.SwiftApplication;
 import org.gradle.language.swift.SwiftExecutable;
 import org.gradle.language.swift.SwiftPlatform;
 import org.gradle.language.swift.internal.DefaultSwiftApplication;
+import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
@@ -89,7 +91,7 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
         application.getTargetMachines().convention(Dimensions.getDefaultTargetMachines(targetMachineFactory));
         application.getBinaries().whenElementKnown(SwiftExecutable.class, executable -> {
             // Use the debug variant as the development binary
-            if (executable.isDebuggable()) {
+            if (!executable.isOptimized()) {
                 application.getDevelopmentBinary().set(executable);
             }
         });
@@ -102,16 +104,16 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
                     throw new IllegalArgumentException("A target machine needs to be specified for the application.");
                 }
 
-                for (SwiftExecutable executable : (Set<SwiftExecutable>) new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
+                for (SwiftExecutable binary : new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
                         .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
                         .withTargetMachines(targetMachines)
-                        .registerBinaryTypeFactory(SwiftExecutable.class, (NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine) -> {
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
                             ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, targetMachine);
                             return application.addExecutable(variantIdentity, buildType == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
                         })
                         .build()
                         .get()) {
-                    application.getBinaries().add(executable);
+                    application.getBinaries().add(binary);
                 }
                 // Configure the binaries
                 application.getBinaries().realizeNow();

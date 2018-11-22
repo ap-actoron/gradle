@@ -33,8 +33,10 @@ import org.gradle.language.cpp.internal.DefaultCppApplication;
 import org.gradle.language.cpp.internal.DefaultUsageContext;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
+import org.gradle.language.nativeplatform.internal.BinaryBuilder;
 import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
+import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.MachineArchitecture;
 import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachine;
@@ -43,6 +45,7 @@ import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
 import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -92,6 +95,17 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
         application.getBaseName().set(project.getName());
 
         application.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
+        application.getBinaries().whenElementKnown(CppExecutable.class, binary -> {
+            // Use the debug variant as the development binary
+            // Prefer the host architecture, if present, else use the first architecture specified
+            if (!binary.isOptimized() && (binary.getTargetPlatform().getArchitecture().equals(((DefaultTargetMachineFactory)targetMachineFactory).host().getArchitecture()) || !application.getDevelopmentBinary().isPresent())) {
+                application.getDevelopmentBinary().set(binary);
+            }
+        });
+
+        application.getBinaries().whenElementKnown(binary -> {
+            application.getMainPublication().addVariant(binary);
+        });
 
         project.afterEvaluate(new Action<Project>() {
             @Override
@@ -101,8 +115,19 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
                     throw new IllegalArgumentException("A target machine needs to be specified for the application.");
                 }
 
-                Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
+                for (CppExecutable binary : new BinaryBuilder<CppExecutable>(project, attributesFactory)
+                        .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
+                        .withTargetMachines(targetMachines)
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
+                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, targetMachine);
+                            return application.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        })
+                        .build()
+                        .get()) {
+                    application.getBinaries().add(binary);
+                }
 
+                Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
                 for (BuildType buildType : BuildType.DEFAULT_BUILD_TYPES) {
                     for (TargetMachine targetMachine : targetMachines) {
                         String operatingSystemSuffix = createDimensionSuffix(targetMachine.getOperatingSystemFamily(), targetMachines.stream().map(TargetMachine::getOperatingSystemFamily).collect(Collectors.toSet()));
@@ -132,21 +157,10 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
 
                         NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, application.getBaseName(), group, version, buildType.isDebuggable(), buildType.isOptimized(), targetMachine,
                             null,
-                            new DefaultUsageContext(variantName + "Runtime", runtimeUsage, runtimeAttributes));
+                            new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes));
 
                         if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(targetMachine.getOperatingSystemFamily().getName())) {
-                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, targetMachine);
-
-                            CppExecutable executable = application.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-
-                            // Use the debug variant as the development binary
-                            // Prefer the host architecture, if present, else use the first architecture specified
-                            if (buildType == BuildType.DEBUG && (targetMachine.getArchitecture().equals(((DefaultTargetMachineFactory)targetMachineFactory).host().getArchitecture()) || !application.getDevelopmentBinary().isPresent())) {
-                                application.getDevelopmentBinary().set(executable);
-                            }
-
-                            application.getMainPublication().addVariant(executable);
-
+                            // Do nothing...
                         } else {
                             // Known, but not buildable
                             application.getMainPublication().addVariant(variantIdentity);

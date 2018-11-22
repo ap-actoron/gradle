@@ -25,12 +25,8 @@ import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.provider.Providers;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Provider;
-import org.gradle.language.cpp.CppSharedLibrary;
-import org.gradle.language.cpp.CppStaticLibrary;
 import org.gradle.language.cpp.internal.DefaultUsageContext;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
-import org.gradle.language.swift.SwiftSharedLibrary;
-import org.gradle.language.swift.SwiftStaticLibrary;
 import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.MachineArchitecture;
 import org.gradle.nativeplatform.OperatingSystemFamily;
@@ -39,8 +35,6 @@ import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
@@ -54,39 +48,41 @@ import static org.gradle.language.nativeplatform.internal.Dimensions.createDimen
 public class BinaryBuilder<T> {
     private final Project project;
     private final ImmutableAttributesFactory attributesFactory;
+    private Provider<String> baseName = Providers.notDefined();
+    private BinaryFactory<T> factory;
+
+    // Dimensions
     private Collection<BuildType> buildTypes = Collections.emptySet();
     private Collection<TargetMachine> targetMachines = Collections.emptySet();
     private Collection<Linkage> linkages = Collections.emptySet();
-    private final Map<Class<? extends T>, BinaryFactory<? extends T>> factories = new HashMap<>();
-    private Provider<String> baseName = Providers.notDefined();
 
     public BinaryBuilder(Project project, ImmutableAttributesFactory attributesFactory) {
         this.project = project;
         this.attributesFactory = attributesFactory;
     }
 
-    public BinaryBuilder withBuildTypes(Collection<BuildType> buildTypes) {
+    public BinaryBuilder<T> withBuildTypes(Collection<BuildType> buildTypes) {
         this.buildTypes = buildTypes;
         return this;
     }
 
-    public BinaryBuilder withTargetMachines(Set<TargetMachine> targetMachines) {
+    public BinaryBuilder<T> withTargetMachines(Set<TargetMachine> targetMachines) {
         this.targetMachines = targetMachines;
         return this;
     }
 
-    public BinaryBuilder withLinkages(Collection<Linkage> linkages) {
+    public BinaryBuilder<T> withLinkages(Collection<Linkage> linkages) {
         this.linkages = linkages;
         return this;
     }
 
-    public BinaryBuilder withBaseName(Provider<String> baseName) {
+    public BinaryBuilder<T> withBaseName(Provider<String> baseName) {
         this.baseName = baseName;
         return this;
     }
 
-    public <I extends T> BinaryBuilder registerBinaryTypeFactory(Class<I> type, BinaryFactory<I> factory) {
-        factories.put(type, factory);
+    public BinaryBuilder<T> withBinaryFactory(BinaryFactory<T> factory) {
+        this.factory = factory;
         return this;
     }
 
@@ -146,25 +142,7 @@ public class BinaryBuilder<T> {
                         NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, baseName, group, version, buildType.isDebuggable(), buildType.isOptimized(), targetMachine, linkUsageContext, runtimeUsageContext);
 
                         if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(targetMachine.getOperatingSystemFamily().getName())) {
-                            if (linkage.isPresent()) {
-                                if (linkage.get().equals(Linkage.SHARED)) {
-                                    BinaryFactory<? extends T> factory = factories.get(SwiftSharedLibrary.class);
-                                    if (factory == null) {
-                                        factory = factories.get(CppSharedLibrary.class);
-                                    }
-                                    binaries.add(factory.create(variantIdentity, buildType, targetMachine));
-                                } else {
-                                    BinaryFactory<? extends T> factory = factories.get(SwiftStaticLibrary.class);
-                                    if (factory == null) {
-                                        factory = factories.get(CppStaticLibrary.class);
-                                    }
-                                    binaries.add(factory.create(variantIdentity, buildType, targetMachine));
-                                }
-                            } else {
-                                for (BinaryFactory<? extends T> factory : factories.values()) {
-                                    binaries.add(factory.create(variantIdentity, buildType, targetMachine));
-                                }
-                            }
+                            factory.create(variantIdentity, buildType, targetMachine, linkage);
                         }
                     }
                 }
@@ -182,6 +160,6 @@ public class BinaryBuilder<T> {
     }
 
     public interface BinaryFactory<T> {
-        T create(NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine);
+        T create(NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage);
     }
 }

@@ -21,6 +21,7 @@ import groovy.lang.Closure;
 import org.gradle.api.Action;
 import org.gradle.api.component.SoftwareComponent;
 import org.gradle.api.internal.provider.AbstractReadOnlyProvider;
+import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.specs.Spec;
 import org.gradle.internal.ImmutableActionSet;
@@ -130,6 +131,12 @@ public class DefaultBinaryCollection<T extends SoftwareComponent> implements Bin
             throw new IllegalStateException("Cannot add an element to this collection as it has already been realized.");
         }
         elements.add(element);
+    }
+
+    public void addAll(Provider<? extends Iterable<T>> elements) {
+        for (T element : elements.get()) {
+            add(element);
+        }
     }
 
     /**

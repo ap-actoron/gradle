@@ -28,11 +28,8 @@ import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Property;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
-<<<<<<< HEAD
-import org.gradle.language.nativeplatform.internal.BuildType;
-=======
 import org.gradle.language.nativeplatform.internal.BinaryBuilder;
->>>>>>> Fix codenarc and failing test due to no value provider
+import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.ComponentWithNames;
 import org.gradle.language.nativeplatform.internal.Names;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
@@ -52,14 +49,12 @@ import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
+import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.stream.Collectors;
 
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
-import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
 
@@ -105,9 +100,9 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
         library.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
         library.getBinaries().whenElementKnown(binary -> {
             // Use the debug variant as the development binary
-            if (binary instanceof SwiftSharedLibrary && binary.isDebuggable()) {
+            if (binary instanceof SwiftSharedLibrary && !binary.isOptimized()) {
                 library.getDevelopmentBinary().set(binary);
-            } else if (!library.getLinkage().get().contains(Linkage.SHARED) && binary.isDebuggable()) {
+            } else if (!library.getLinkage().get().contains(Linkage.SHARED) && !binary.isOptimized()) {
                 // Use the debug static library as the development binary
                 library.getDevelopmentBinary().set(binary);
             }
@@ -127,16 +122,19 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                     throw new IllegalArgumentException("A linkage needs to be specified for the library.");
                 }
 
-                for (SwiftBinary binary : (Set<SwiftBinary>) new BinaryBuilder<SwiftBinary>(project, attributesFactory)
+                for (SwiftBinary binary : new BinaryBuilder<SwiftBinary>(project, attributesFactory)
                         .withBuildTypes(org.gradle.language.nativeplatform.internal.BuildType.DEFAULT_BUILD_TYPES)
                         .withTargetMachines(targetMachines)
-                        .registerBinaryTypeFactory(SwiftSharedLibrary.class, (NativeVariantIdentity variantIdentity, org.gradle.language.nativeplatform.internal.BuildType buildType, TargetMachine targetMachine) -> {
+                        .withLinkages(linkages)
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
                             ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, targetMachine);
-                            return library.addSharedLibrary(variantIdentity, buildType == org.gradle.language.nativeplatform.internal.BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                        })
-                        .registerBinaryTypeFactory(SwiftStaticLibrary.class, (NativeVariantIdentity variantIdentity, org.gradle.language.nativeplatform.internal.BuildType buildType, TargetMachine targetMachine) -> {
-                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, targetMachine);
-                            return library.addSharedLibrary(variantIdentity, buildType == org.gradle.language.nativeplatform.internal.BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+
+                            if (linkage.get().equals(Linkage.SHARED)) {
+                                return library.addSharedLibrary(variantIdentity, buildType == org.gradle.language.nativeplatform.internal.BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                            } else if (linkage.get().equals(Linkage.STATIC)) {
+                                return library.addStaticLibrary(variantIdentity, buildType == org.gradle.language.nativeplatform.internal.BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                            }
+                            throw new IllegalArgumentException("Invalid linkage");
                         })
                         .build()
                         .get()) {

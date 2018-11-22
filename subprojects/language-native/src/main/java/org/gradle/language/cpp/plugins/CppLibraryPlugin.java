@@ -56,7 +56,6 @@ import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
 import java.io.File;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -146,12 +145,12 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                         .withBuildTypes(org.gradle.language.nativeplatform.internal.BuildType.DEFAULT_BUILD_TYPES)
                         .withTargetMachines(targetMachines)
                         .withLinkages(linkages)
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
-                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, targetMachine);
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
+                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, context.get(TargetMachine.class).get());
 
-                            if (linkage.get().equals(Linkage.SHARED)) {
+                            if (context.get(Linkage.class).get().equals(Linkage.SHARED)) {
                                 return library.addSharedLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                            } else if (linkage.get().equals(Linkage.STATIC)) {
+                            } else if (context.get(Linkage.class).get().equals(Linkage.STATIC)) {
                                 return library.addStaticLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
                             }
                             throw new IllegalArgumentException("Invalid linkage");

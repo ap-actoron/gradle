@@ -49,7 +49,6 @@ import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
-import java.util.Optional;
 import java.util.Set;
 
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
@@ -126,13 +125,13 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                         .withBuildTypes(org.gradle.language.nativeplatform.internal.BuildType.DEFAULT_BUILD_TYPES)
                         .withTargetMachines(targetMachines)
                         .withLinkages(linkages)
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
-                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, targetMachine);
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
+                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
 
-                            if (linkage.get().equals(Linkage.SHARED)) {
-                                return library.addSharedLibrary(variantIdentity, buildType == org.gradle.language.nativeplatform.internal.BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                            } else if (linkage.get().equals(Linkage.STATIC)) {
-                                return library.addStaticLibrary(variantIdentity, buildType == org.gradle.language.nativeplatform.internal.BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                            if (context.get(Linkage.class).get().equals(Linkage.SHARED)) {
+                                return library.addSharedLibrary(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                            } else if (context.get(Linkage.class).get().equals(Linkage.STATIC)) {
+                                return library.addStaticLibrary(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
                             }
                             throw new IllegalArgumentException("Invalid linkage");
                         })

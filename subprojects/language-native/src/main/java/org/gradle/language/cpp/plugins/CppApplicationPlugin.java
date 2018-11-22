@@ -36,7 +36,6 @@ import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.BinaryBuilder;
 import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
-import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.MachineArchitecture;
 import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachine;
@@ -45,7 +44,6 @@ import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
 import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
@@ -118,8 +116,8 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
                 for (CppExecutable binary : new BinaryBuilder<CppExecutable>(project, attributesFactory)
                         .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
                         .withTargetMachines(targetMachines)
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
-                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, targetMachine);
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
+                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, context.get(TargetMachine.class).get());
                             return application.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
                         })
                         .build()

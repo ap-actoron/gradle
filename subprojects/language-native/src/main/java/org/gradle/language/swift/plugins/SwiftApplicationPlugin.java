@@ -34,13 +34,11 @@ import org.gradle.language.swift.SwiftApplication;
 import org.gradle.language.swift.SwiftExecutable;
 import org.gradle.language.swift.SwiftPlatform;
 import org.gradle.language.swift.internal.DefaultSwiftApplication;
-import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
-import java.util.Optional;
 import java.util.Set;
 
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
@@ -107,9 +105,9 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
                 for (SwiftExecutable binary : new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
                         .withBuildTypes(BuildType.DEFAULT_BUILD_TYPES)
                         .withTargetMachines(targetMachines)
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BuildType buildType, TargetMachine targetMachine, Optional<Linkage> linkage) -> {
-                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, targetMachine);
-                            return application.addExecutable(variantIdentity, buildType == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
+                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
+                            return application.addExecutable(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
                         })
                         .build()
                         .get()) {

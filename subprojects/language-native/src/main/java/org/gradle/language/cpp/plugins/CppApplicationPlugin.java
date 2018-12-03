@@ -23,24 +23,30 @@ import org.gradle.api.Project;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.model.ObjectFactory;
+import org.gradle.api.provider.Provider;
 import org.gradle.language.cpp.CppApplication;
 import org.gradle.language.cpp.CppExecutable;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.internal.DefaultCppApplication;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.BinaryBuilder;
+import org.gradle.language.nativeplatform.internal.VariantIdentityBuilder;
 import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
+import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
+import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
+import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
+import static org.gradle.language.nativeplatform.internal.VariantIdentityBuilder.newDimension;
 import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
@@ -106,32 +112,17 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
                     throw new IllegalArgumentException("A target machine needs to be specified for the application.");
                 }
 
-                BinaryBuilder.Result binaryResult = new BinaryBuilder<CppExecutable>(project, attributesFactory)
-                        .withDimension(
-                                BinaryBuilder.newDimension(BuildType.class)
-                                        .withValues(BuildType.DEFAULT_BUILD_TYPES)
-                                        .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
-                                        .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
-                                        .build())
-                        .withDimension(
-                                BinaryBuilder.newDimension(TargetMachine.class)
-                                        .withValues(targetMachines)
-                                        .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
-                                        .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
-                                        .withName(it -> {
-                                            String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
-                                            String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
-                                            return operatingSystemSuffix + architectureSuffix;
-                                        })
-                                        .build())
+                Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
+                        .withDimension(toBuildTypeDimension())
+                        .withDimension(toTargetMachineDimension(targetMachines))
                         .withBaseName(application.getBaseName())
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
-                            ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, context.get(TargetMachine.class).get());
-                            return application.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                        })
                         .build();
-                application.getBinaries().addAll(binaryResult.getBinaries());
-                ((Set<NativeVariantIdentity>)binaryResult.getNonBuildableVariants().get()).forEach(variantIdentity -> {
+                application.getBinaries().addAll(identities.map(it -> it.stream().filter(CppApplicationPlugin::isBuildable).map(identity -> {
+                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
+                    return application.addExecutable(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                }).collect(Collectors.toSet())));
+
+                identities.get().stream().filter(it -> !isBuildable(it)).forEach(variantIdentity -> {
                     // Known, but not buildable
                     application.getMainPublication().addVariant(variantIdentity);
                 });
@@ -140,5 +131,37 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
                 application.getBinaries().realizeNow();
             }
         });
+    }
+
+    public static VariantIdentityBuilder.DimensionValues<BuildType> toBuildTypeDimension() {
+        return newDimension(BuildType.class)
+                .withValues(BuildType.DEFAULT_BUILD_TYPES)
+                .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
+                .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
+                .build();
+    }
+
+    public static VariantIdentityBuilder.DimensionValues<TargetMachine> toTargetMachineDimension(Set<TargetMachine> targetMachines) {
+        return newDimension(TargetMachine.class)
+                .withValues(targetMachines)
+                .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
+                .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
+                .withName(it -> {
+                    String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
+                    String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
+                    return operatingSystemSuffix + architectureSuffix;
+                })
+                .build();
+    }
+
+    public static VariantIdentityBuilder.DimensionValues<Linkage> toLinkageDimension(Set<Linkage> linkages) {
+        return newDimension(Linkage.class)
+                .withValues(linkages)
+                .attribute(LINKAGE_ATTRIBUTE, it -> it)
+                .build();
+    }
+
+    public static boolean isBuildable(NativeVariantIdentity identity) {
+        return DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(identity.getTargetMachine().getOperatingSystemFamily().getName());
     }
 }

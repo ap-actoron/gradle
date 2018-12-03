@@ -24,11 +24,12 @@ import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.file.FileOperations;
 import org.gradle.api.internal.project.ProjectInternal;
+import org.gradle.api.provider.Provider;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
+import org.gradle.language.cpp.plugins.CppApplicationPlugin;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.BinaryBuilder;
-import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.Dimensions;
+import org.gradle.language.nativeplatform.internal.VariantIdentityBuilder;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.language.swift.SwiftApplication;
 import org.gradle.language.swift.SwiftExecutable;
@@ -40,13 +41,11 @@ import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
 import java.util.Set;
+import java.util.stream.Collectors;
 
-import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
-import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
-import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
+import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toBuildTypeDimension;
+import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toTargetMachineDimension;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
-import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
-import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
 
 /**
  * <p>A plugin that produces an executable from Swift source.</p>
@@ -107,31 +106,15 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
                     throw new IllegalArgumentException("A target machine needs to be specified for the application.");
                 }
 
-                BinaryBuilder.Result builderResult = new BinaryBuilder<SwiftExecutable>(project, attributesFactory)
-                        .withDimension(
-                                BinaryBuilder.newDimension(BuildType.class)
-                                        .withValues(BuildType.DEFAULT_BUILD_TYPES)
-                                        .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
-                                        .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
-                                        .build())
-                        .withDimension(
-                                BinaryBuilder.newDimension(TargetMachine.class)
-                                        .withValues(targetMachines)
-                                        .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
-                                        .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
-                                        .withName(it -> {
-                                            String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
-                                            String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
-                                            return operatingSystemSuffix + architectureSuffix;
-                                        })
-                                        .build())
+                Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
+                        .withDimension(toBuildTypeDimension())
+                        .withDimension(toTargetMachineDimension(targetMachines))
                         .withBaseName(application.getModule())
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
-                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
-                            return application.addExecutable(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                        })
                         .build();
-                application.getBinaries().addAll(builderResult.getBinaries());
+                application.getBinaries().addAll(identities.map(it -> it.stream().filter(CppApplicationPlugin::isBuildable).map(identity -> {
+                    ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, identity.getTargetMachine());
+                    return application.addExecutable(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                }).collect(Collectors.toSet())));
 
                 // Configure the binaries
                 application.getBinaries().realizeNow();

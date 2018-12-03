@@ -26,14 +26,14 @@ import org.gradle.api.attributes.Usage;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.Provider;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
+import org.gradle.language.cpp.plugins.CppApplicationPlugin;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.BinaryBuilder;
-import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.ComponentWithNames;
 import org.gradle.language.nativeplatform.internal.Names;
+import org.gradle.language.nativeplatform.internal.VariantIdentityBuilder;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
-import org.gradle.language.swift.SwiftBinary;
 import org.gradle.language.swift.SwiftComponent;
 import org.gradle.language.swift.SwiftLibrary;
 import org.gradle.language.swift.SwiftPlatform;
@@ -50,15 +50,16 @@ import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
+import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toBuildTypeDimension;
+import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toLinkageDimension;
+import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toTargetMachineDimension;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
-import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
-import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
 
 /**
  * <p>A plugin that produces a shared library from Swift source.</p>
@@ -124,42 +125,22 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                     throw new IllegalArgumentException("A linkage needs to be specified for the library.");
                 }
 
-                BinaryBuilder.Result binaryResult = new BinaryBuilder<SwiftBinary>(project, attributesFactory)
-                        .withDimension(
-                                BinaryBuilder.newDimension(BuildType.class)
-                                        .withValues(BuildType.DEFAULT_BUILD_TYPES)
-                                        .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
-                                        .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
-                                        .build())
-                        .withDimension(
-                                BinaryBuilder.newDimension(Linkage.class)
-                                        .withValues(linkages)
-                                        .attribute(LINKAGE_ATTRIBUTE, it -> it)
-                                        .build())
-                        .withDimension(
-                                BinaryBuilder.newDimension(TargetMachine.class)
-                                        .withValues(targetMachines)
-                                        .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
-                                        .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
-                                        .withName(it -> {
-                                            String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
-                                            String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
-                                            return operatingSystemSuffix + architectureSuffix;
-                                        })
-                                        .build())
+                Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
+                        .withDimension(toBuildTypeDimension())
+                        .withDimension(toLinkageDimension(linkages))
+                        .withDimension(toTargetMachineDimension(targetMachines))
                         .withBaseName(library.getModule())
-                        .withBinaryFactory((NativeVariantIdentity variantIdentity, BinaryBuilder.DimensionContext context) -> {
-                            ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, context.get(TargetMachine.class).get());
-
-                            if (context.get(Linkage.class).get().equals(Linkage.SHARED)) {
-                                return library.addSharedLibrary(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                            } else if (context.get(Linkage.class).get().equals(Linkage.STATIC)) {
-                                return library.addStaticLibrary(variantIdentity, context.get(BuildType.class).get() == BuildType.DEBUG, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                            }
-                            throw new IllegalArgumentException("Invalid linkage");
-                        })
                         .build();
-                library.getBinaries().addAll(binaryResult.getBinaries());
+                library.getBinaries().addAll(identities.map(it -> it.stream().filter(CppApplicationPlugin::isBuildable).map(identity -> {
+                    ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, identity.getTargetMachine());
+
+                    if (identity.getLinkage().equals(Linkage.SHARED)) {
+                        return library.addSharedLibrary(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                    } else if (identity.getLinkage().equals(Linkage.STATIC)) {
+                        return library.addStaticLibrary(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                    }
+                    throw new IllegalArgumentException("Invalid linkage");
+                }).collect(Collectors.toSet())));
 
                 library.getBinaries().whenElementKnown(SwiftSharedLibrary.class, new Action<SwiftSharedLibrary>() {
                     @Override

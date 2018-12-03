@@ -38,7 +38,6 @@ import org.gradle.language.cpp.internal.DefaultUsageContext;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.TargetMachine;
-import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -56,19 +55,18 @@ import java.util.stream.Collectors;
 
 import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
 
-public class BinaryBuilder<T> {
+public class VariantIdentityBuilder {
     private final Project project;
     private final ImmutableAttributesFactory attributesFactory;
     private Provider<String> baseName = Providers.notDefined();
-    private BinaryFactory<T> factory;
     private List<DimensionValues<?>> dimensions = Lists.newArrayList();
 
-    public BinaryBuilder(Project project, ImmutableAttributesFactory attributesFactory) {
+    public VariantIdentityBuilder(Project project, ImmutableAttributesFactory attributesFactory) {
         this.project = project;
         this.attributesFactory = attributesFactory;
     }
 
-    public <I> BinaryBuilder<T> withDimension(DimensionValues<I> dimension) {
+    public <I> VariantIdentityBuilder withDimension(DimensionValues<I> dimension) {
         dimensions.add(dimension);
         return this;
     }
@@ -112,96 +110,64 @@ public class BinaryBuilder<T> {
         }
     }
 
-    public BinaryBuilder<T> withBaseName(Provider<String> baseName) {
+    public VariantIdentityBuilder withBaseName(Provider<String> baseName) {
         this.baseName = baseName;
         return this;
     }
 
-    public BinaryBuilder<T> withBinaryFactory(BinaryFactory<T> factory) {
-        this.factory = factory;
-        return this;
+    public Provider<Set<NativeVariantIdentity>> build() {
+        return project.provider(() -> {
+            Set<NativeVariantIdentity> variantIdentities = Sets.newHashSet();
+
+            forEach(context -> {
+                NativeVariantIdentity variantIdentity = newVariantIdentity(context);
+                variantIdentities.add(variantIdentity);
+            });
+
+            return variantIdentities;
+        });
     }
 
-    public class Result {
-        public Provider<? extends Set<T>> getBinaries() {
-            return project.provider(() -> {
-                Set<T> binaries = Sets.newHashSet();
+    private NativeVariantIdentity newVariantIdentity(DefaultDimensionContext context) {
+        ObjectFactory objectFactory = project.getObjects();
+        Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
+        Usage linkUsage = objectFactory.named(Usage.class, Usage.NATIVE_LINK);
 
-                forEach(context -> {
-                    NativeVariantIdentity variantIdentity = newVariantIdentity(context);
+        String variantName = context.getName();
 
-                    if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(context.get(TargetMachine.class).get().getOperatingSystemFamily().getName())) {
-                        binaries.add(factory.create(variantIdentity, context));
-                    }
-                });
-
-                return binaries;
-            });
-        }
-
-        public Provider<? extends Set<NativeVariantIdentity>> getNonBuildableVariants() {
-            return project.provider(() -> {
-                Set<NativeVariantIdentity> variantIdentities = Sets.newHashSet();
-
-                forEach(context -> {
-                    NativeVariantIdentity variantIdentity = newVariantIdentity(context);
-
-                    if (DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(context.get(TargetMachine.class).get().getOperatingSystemFamily().getName())) {
-                        // Do nothing...
-                    } else {
-                        variantIdentities.add(variantIdentity);
-                    }
-                });
-
-                return variantIdentities;
-            });
-        }
-
-        private NativeVariantIdentity newVariantIdentity(DefaultDimensionContext context) {
-            ObjectFactory objectFactory = project.getObjects();
-            Usage runtimeUsage = objectFactory.named(Usage.class, Usage.NATIVE_RUNTIME);
-            Usage linkUsage = objectFactory.named(Usage.class, Usage.NATIVE_LINK);
-
-            String variantName = context.getName();
-
-            Provider<String> group = project.provider(new Callable<String>() {
-                @Override
-                public String call() throws Exception {
-                    return project.getGroup().toString();
-                }
-            });
-
-            Provider<String> version = project.provider(new Callable<String>() {
-                @Override
-                public String call() throws Exception {
-                    return project.getVersion().toString();
-                }
-            });
-
-            AttributeContainer runtimeAttributes = attributesFactory.mutable(context.getAttributes());
-            runtimeAttributes.attribute(Usage.USAGE_ATTRIBUTE, runtimeUsage);
-
-            DefaultUsageContext runtimeUsageContext = new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes);
-
-            DefaultUsageContext linkUsageContext = null;
-            if (context.get(Linkage.class).isPresent()) {
-                AttributeContainer linkAttributes = attributesFactory.mutable(context.getAttributes());
-                linkAttributes.attribute(Usage.USAGE_ATTRIBUTE, linkUsage);
-
-                linkUsageContext = new DefaultUsageContext(variantName + "-link", linkUsage, linkAttributes);
+        Provider<String> group = project.provider(new Callable<String>() {
+            @Override
+            public String call() throws Exception {
+                return project.getGroup().toString();
             }
+        });
 
-            NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, baseName, group, version, context.get(BuildType.class).get().isDebuggable(), context.get(BuildType.class).get().isOptimized(), context.get(TargetMachine.class).get(), linkUsageContext, runtimeUsageContext);
+        Provider<String> version = project.provider(new Callable<String>() {
+            @Override
+            public String call() throws Exception {
+                return project.getVersion().toString();
+            }
+        });
 
-            return variantIdentity;
+        AttributeContainer runtimeAttributes = attributesFactory.mutable(context.getAttributes());
+        runtimeAttributes.attribute(Usage.USAGE_ATTRIBUTE, runtimeUsage);
+
+        DefaultUsageContext runtimeUsageContext = new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes);
+
+        DefaultUsageContext linkUsageContext = null;
+        if (context.get(Linkage.class).isPresent()) {
+            AttributeContainer linkAttributes = attributesFactory.mutable(context.getAttributes());
+            linkAttributes.attribute(Usage.USAGE_ATTRIBUTE, linkUsage);
+
+            linkUsageContext = new DefaultUsageContext(variantName + "-link", linkUsage, linkAttributes);
         }
+
+        NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, baseName, group, version, context.get(BuildType.class).get().isDebuggable(), context.get(BuildType.class).get().isOptimized(), context.get(TargetMachine.class).get(), linkUsageContext, runtimeUsageContext);
+
+        return variantIdentity;
     }
 
-    public Result build() {
-        return new Result();
-    }
-
-    private static class DimensionValues<I> {
+    public static class DimensionValues<I> {
         private final Class<I> type;
         private final Collection<I> values;
         private final Function<I, String> toStringSupplier;
@@ -216,11 +182,11 @@ public class BinaryBuilder<T> {
 
         void forEach(DefaultDimensionContext context, Queue<DimensionValues<?>> dimensions, Consumer<DefaultDimensionContext> action) {
             if (values.isEmpty()) {
-                BinaryBuilder.forEach(context, dimensions, action);
+                VariantIdentityBuilder.forEach(context, dimensions, action);
             } else {
                 values.stream().map(it -> Optional.of(it)).forEach(it -> {
                     context.values.put(type, new Dimension<I>(type, it, toStringSupplier, attributes));
-                    BinaryBuilder.forEach(context, dimensions, action);
+                    VariantIdentityBuilder.forEach(context, dimensions, action);
                 });
             }
         }
@@ -314,9 +280,5 @@ public class BinaryBuilder<T> {
     private void forEach(Consumer<DefaultDimensionContext> action) {
         DefaultDimensionContext context = new DefaultDimensionContext(attributesFactory);
         forEach(context, new LinkedList<>(dimensions), action);
-    }
-
-    public interface BinaryFactory<T> {
-        T create(NativeVariantIdentity variantIdentity, DimensionContext context);
     }
 }

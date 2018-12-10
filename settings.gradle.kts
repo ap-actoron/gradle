@@ -183,3 +183,4 @@ FeaturePreviews.Feature.values().forEach { feature ->
     }
 }
 
+includeBuild("../distributed-builds")

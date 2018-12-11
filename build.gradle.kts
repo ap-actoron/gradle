@@ -30,7 +30,7 @@ import org.gradle.gradlebuild.buildquality.incubation.IncubatingApiReportTask
 
 plugins {
     `java-base`
-    id("com.gradle.distributed")
+    id("com.gradle.distributed") version("0.0.1")
     gradlebuild.`build-types`
     gradlebuild.`ci-reporting`
     // TODO Apply this plugin in the BuildScanConfigurationPlugin once binary plugins can apply plugins via the new plugin DSL

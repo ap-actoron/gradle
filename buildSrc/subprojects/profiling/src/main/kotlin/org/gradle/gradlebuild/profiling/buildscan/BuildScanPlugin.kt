@@ -143,7 +143,7 @@ open class BuildScanPlugin : Plugin<Project> {
                         setCommitId(System.getenv("TRAVIS_COMMIT"))
                     }
                     isJenkins -> {
-                        link("Jenkins Build", System.getenv("JOB_URL"))
+                        link("Jenkins Build", System.getenv("BUILD_URL"))
                         value("Build ID", System.getenv("BUILD_ID"))
                         setCommitId(System.getenv("GIT_COMMIT"))
                     }

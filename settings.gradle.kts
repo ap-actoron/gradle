@@ -167,6 +167,7 @@ for (project in rootProject.children) {
 
 pluginManagement {
     repositories {
+        mavenLocal()
         gradlePluginPortal()
         maven { url = uri("https://repo.gradle.org/gradle/libs-releases") }
     }
@@ -182,5 +183,3 @@ FeaturePreviews.Feature.values().forEach { feature ->
         enableFeaturePreview(feature.name)
     }
 }
-
-includeBuild("../distributed-builds")

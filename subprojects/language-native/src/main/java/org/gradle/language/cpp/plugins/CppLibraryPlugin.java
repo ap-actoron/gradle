@@ -57,7 +57,6 @@ import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toBuildTypeDi
 import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toLinkageDimension;
 import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toTargetMachineDimension;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
 
 /**
  * <p>A plugin that produces a native library from C++ source.</p>
@@ -105,15 +104,15 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
         library.getBaseName().set(project.getName());
 
         library.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
-        library.getBinaries().whenElementKnown(binary -> {
-            if (binary instanceof CppSharedLibrary && !binary.isOptimized()) {
-                // Use the debug shared library as the development binary
-                library.getDevelopmentBinary().set(binary);
-            } else if (!library.getLinkage().get().contains(Linkage.SHARED) && !binary.isOptimized()) {
-                // Use the debug static library as the development binary
-                library.getDevelopmentBinary().set(binary);
-            }
-        });
+        library.getDevelopmentBinary().convention(project.provider(() -> {
+            return library.getBinaries().get().stream()
+                    .filter(binary -> binary instanceof CppSharedLibrary && !binary.isOptimized())
+                    .findFirst()
+                    .orElse(library.getBinaries().get().stream()
+                            .filter(binary -> !library.getLinkage().get().contains(Linkage.SHARED) && !binary.isOptimized())
+                            .findFirst()
+                            .orElse(null));
+        }));
 
         library.getBinaries().whenElementKnown(binary -> {
             library.getMainPublication().addVariant(binary);
@@ -122,17 +121,17 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                Set<TargetMachine> targetMachines = setDefaultAndGetTargetMachineValues(library.getTargetMachines(), targetMachineFactory);
+                Set<TargetMachine> targetMachines = library.getTargetMachines().get();
                 if (targetMachines.isEmpty()) {
                     throw new IllegalArgumentException("A target machine needs to be specified for the library.");
                 }
+                library.getTargetMachines().finalizeValue();
 
-                library.getLinkage().finalizeValue();
                 Set<Linkage> linkages = library.getLinkage().get();
                 if (linkages.isEmpty()) {
                     throw new IllegalArgumentException("A linkage needs to be specified for the library.");
                 }
-
+                library.getLinkage().finalizeValue();
 
                 Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
                         .withDimension(toBuildTypeDimension())

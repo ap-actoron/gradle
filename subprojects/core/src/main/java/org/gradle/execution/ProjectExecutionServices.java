@@ -52,10 +52,12 @@ import org.gradle.execution.taskgraph.TaskExecutionGraphInternal;
 import org.gradle.internal.classloader.ClassLoaderHierarchyHasher;
 import org.gradle.internal.cleanup.BuildOutputCleanupRegistry;
 import org.gradle.internal.event.ListenerManager;
+import org.gradle.internal.CachePopulatorRegistry;
 import org.gradle.internal.execution.OutputChangeListener;
 import org.gradle.internal.execution.WorkExecutor;
 import org.gradle.internal.execution.history.ExecutionHistoryStore;
 import org.gradle.internal.execution.history.OutputFilesRepository;
+import org.gradle.internal.execution.impl.DefaultCachePopulatorRegistry;
 import org.gradle.internal.execution.impl.steps.UpToDateResult;
 import org.gradle.internal.file.PathToFileResolver;
 import org.gradle.internal.file.RelativeFilePathResolver;
@@ -112,7 +114,8 @@ public class ProjectExecutionServices extends DefaultServiceRegistry {
                                     BuildInvocationScopeId buildInvocationScopeId,
                                     TaskExecutionListener taskExecutionListener,
                                     RelativeFilePathResolver relativeFilePathResolver,
-                                    WorkExecutor<UpToDateResult> workExecutor
+                                    WorkExecutor<UpToDateResult> workExecutor,
+                                    CachePopulatorRegistry cachePopulatorRegistry
     ) {
 
         boolean buildCacheEnabled = buildCacheController.isEnabled();
@@ -123,7 +126,8 @@ public class ProjectExecutionServices extends DefaultServiceRegistry {
             buildOperationExecutor,
             asyncWorkTracker,
             actionListener,
-            workExecutor
+            workExecutor,
+            cachePopulatorRegistry
         );
         executer = new ResolveTaskOutputCachingStateExecuter(buildCacheEnabled, relativeFilePathResolver, executer);
         if (buildCacheEnabled || scanPluginApplied) {

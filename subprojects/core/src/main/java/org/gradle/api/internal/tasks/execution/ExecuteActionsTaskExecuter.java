@@ -40,10 +40,12 @@ import org.gradle.internal.exceptions.Contextual;
 import org.gradle.internal.exceptions.DefaultMultiCauseException;
 import org.gradle.internal.exceptions.MultiCauseException;
 import org.gradle.internal.execution.CacheHandler;
+import org.gradle.internal.CachePopulatorRegistry;
 import org.gradle.internal.execution.ExecutionException;
 import org.gradle.internal.execution.UnitOfWork;
 import org.gradle.internal.execution.WorkExecutor;
 import org.gradle.internal.execution.history.changes.ExecutionStateChanges;
+import org.gradle.internal.execution.impl.DefaultCachePopulatorRegistry;
 import org.gradle.internal.execution.impl.steps.UpToDateResult;
 import org.gradle.internal.fingerprint.CurrentFileCollectionFingerprint;
 import org.gradle.internal.operations.BuildOperationContext;
@@ -71,19 +73,22 @@ public class ExecuteActionsTaskExecuter implements TaskExecuter {
     private final AsyncWorkTracker asyncWorkTracker;
     private final TaskActionListener actionListener;
     private final WorkExecutor<UpToDateResult> workExecutor;
+    private final DefaultCachePopulatorRegistry cachePopulatorRegistry;
 
     public ExecuteActionsTaskExecuter(
         boolean buildCacheEnabled,
         BuildOperationExecutor buildOperationExecutor,
         AsyncWorkTracker asyncWorkTracker,
         TaskActionListener actionListener,
-        WorkExecutor<UpToDateResult> workExecutor
+        WorkExecutor<UpToDateResult> workExecutor,
+        CachePopulatorRegistry cachePopulatorRegistry
     ) {
         this.buildCacheEnabled = buildCacheEnabled;
         this.buildOperationExecutor = buildOperationExecutor;
         this.asyncWorkTracker = asyncWorkTracker;
         this.actionListener = actionListener;
         this.workExecutor = workExecutor;
+        this.cachePopulatorRegistry = (DefaultCachePopulatorRegistry) cachePopulatorRegistry;
     }
 
     @Override
@@ -201,7 +206,16 @@ public class ExecuteActionsTaskExecuter implements TaskExecuter {
                             && context.getTaskArtifactState().isAllowedToUseCachedResults()
                             && context.getBuildCacheKey().isValid()
                     ) {
-                        return Optional.ofNullable(loader.apply(context.getBuildCacheKey()));
+                        T loadResult = loader.apply(context.getBuildCacheKey());
+                        if (loadResult == null) {
+                            if (cachePopulatorRegistry.executePopulator(task)) { //blocks until population is finished
+                                loadResult = loader.apply(context.getBuildCacheKey());
+                                if (loadResult == null) {
+                                    throw new RuntimeException("Populated cache expected");
+                                }
+                            }
+                        }
+                        return Optional.ofNullable(loadResult);
                     } else {
                         return Optional.empty();
                     }

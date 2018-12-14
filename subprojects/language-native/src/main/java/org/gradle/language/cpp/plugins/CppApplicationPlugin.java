@@ -20,37 +20,35 @@ import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Transformer;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Provider;
+import org.gradle.api.provider.ProviderFactory;
 import org.gradle.language.cpp.CppApplication;
+import org.gradle.language.cpp.CppBinary;
 import org.gradle.language.cpp.CppExecutable;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.internal.DefaultCppApplication;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.BuildType;
-import org.gradle.language.nativeplatform.internal.VariantIdentityBuilder;
+import org.gradle.language.nativeplatform.internal.Variant;
+import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
-import org.gradle.nativeplatform.Linkage;
-import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
-import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
-import java.util.Set;
+import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 
-import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
-import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
-import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
-import static org.gradle.language.nativeplatform.internal.Dimensions.createDimensionSuffix;
+import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.nativeplatform.internal.VariantIdentityBuilder.newDimension;
-import static org.gradle.nativeplatform.MachineArchitecture.ARCHITECTURE_ATTRIBUTE;
-import static org.gradle.nativeplatform.OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE;
+import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
+import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
+import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
 
 /**
  * <p>A plugin that produces a native application from C++ source.</p>
@@ -67,13 +65,15 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
     private final ToolChainSelector toolChainSelector;
     private final ImmutableAttributesFactory attributesFactory;
     private final TargetMachineFactory targetMachineFactory;
+    private final ProviderFactory providerFactory;
 
     @Inject
-    public CppApplicationPlugin(NativeComponentFactory componentFactory, ToolChainSelector toolChainSelector, ImmutableAttributesFactory attributesFactory, TargetMachineFactory targetMachineFactory) {
+    public CppApplicationPlugin(NativeComponentFactory componentFactory, ToolChainSelector toolChainSelector, ImmutableAttributesFactory attributesFactory, TargetMachineFactory targetMachineFactory, ProviderFactory providerFactory) {
         this.componentFactory = componentFactory;
         this.toolChainSelector = toolChainSelector;
         this.attributesFactory = attributesFactory;
         this.targetMachineFactory = targetMachineFactory;
+        this.providerFactory = providerFactory;
     }
 
     @Override
@@ -103,24 +103,14 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
             application.getMainPublication().addVariant(binary);
         });
 
+        Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions()), project.provider(targetMachineDimensions(application.getTargetMachines())))));
+
+        Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, application.getBaseName(), attributesFactory));
+
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                Set<TargetMachine> targetMachines = application.getTargetMachines().get();
-                if (targetMachines.isEmpty()) {
-                    throw new IllegalArgumentException("A target machine needs to be specified for the application.");
-                }
-                application.getTargetMachines().finalizeValue();
-
-                Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
-                        .withDimension(toBuildTypeDimension())
-                        .withDimension(toTargetMachineDimension(targetMachines))
-                        .withBaseName(application.getBaseName())
-                        .build();
-                application.getBinaries().addAll(identities.map(it -> it.stream().filter(CppApplicationPlugin::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
-                    return application.addExecutable(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                }).collect(Collectors.toSet())));
+                application.getBinaries().addAll(identities.map(createBinaries(application)));
 
                 identities.get().stream().filter(it -> !isBuildable(it)).forEach(variantIdentity -> {
                     // Known, but not buildable
@@ -133,35 +123,15 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
         });
     }
 
-    public static VariantIdentityBuilder.DimensionValues<BuildType> toBuildTypeDimension() {
-        return newDimension(BuildType.class)
-                .withValues(BuildType.DEFAULT_BUILD_TYPES)
-                .attribute(DEBUGGABLE_ATTRIBUTE, it -> it.isDebuggable())
-                .attribute(OPTIMIZED_ATTRIBUTE, it -> it.isOptimized())
-                .build();
-    }
-
-    public static VariantIdentityBuilder.DimensionValues<TargetMachine> toTargetMachineDimension(Set<TargetMachine> targetMachines) {
-        return newDimension(TargetMachine.class)
-                .withValues(targetMachines)
-                .attribute(OPERATING_SYSTEM_ATTRIBUTE, it -> it.getOperatingSystemFamily())
-                .attribute(ARCHITECTURE_ATTRIBUTE, it -> it.getArchitecture())
-                .withName(it -> {
-                    String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), targetMachines);
-                    String architectureSuffix = createDimensionSuffix(it.getArchitecture(), targetMachines);
-                    return operatingSystemSuffix + architectureSuffix;
-                })
-                .build();
-    }
-
-    public static VariantIdentityBuilder.DimensionValues<Linkage> toLinkageDimension(Set<Linkage> linkages) {
-        return newDimension(Linkage.class)
-                .withValues(linkages)
-                .attribute(LINKAGE_ATTRIBUTE, it -> it)
-                .build();
-    }
-
-    public static boolean isBuildable(NativeVariantIdentity identity) {
-        return DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName().equals(identity.getTargetMachine().getOperatingSystemFamily().getName());
+    private Transformer<List<CppBinary>, List<NativeVariantIdentity>> createBinaries(DefaultCppApplication component) {
+        return new Transformer<List<CppBinary>, List<NativeVariantIdentity>>() {
+            @Override
+            public List<CppBinary> transform(List<NativeVariantIdentity> identities) {
+                return identities.stream().filter(Variants::isBuildable).map(identity -> {
+                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
+                    return component.addExecutable(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                }).collect(Collectors.toList());
+            }
+        };
     }
 }

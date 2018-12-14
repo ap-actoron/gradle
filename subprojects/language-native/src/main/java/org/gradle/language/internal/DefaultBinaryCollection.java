@@ -133,6 +133,12 @@ public class DefaultBinaryCollection<T extends SoftwareComponent> implements Bin
         elements.add(element);
     }
 
+    public void addAll(Iterable<? extends T> elements) {
+        for (T element : elements) {
+            add(element);
+        }
+    }
+
     public void addAll(Provider<? extends Iterable<T>> elements) {
         for (T element : elements.get()) {
             add(element);

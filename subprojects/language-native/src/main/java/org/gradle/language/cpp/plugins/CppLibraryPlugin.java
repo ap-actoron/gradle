@@ -20,6 +20,7 @@ import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Transformer;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.internal.artifacts.dsl.LazyPublishArtifact;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
@@ -32,6 +33,7 @@ import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.bundling.Zip;
+import org.gradle.language.cpp.CppBinary;
 import org.gradle.language.cpp.CppLibrary;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.CppSharedLibrary;
@@ -39,7 +41,8 @@ import org.gradle.language.cpp.internal.DefaultCppLibrary;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.BuildType;
-import org.gradle.language.nativeplatform.internal.VariantIdentityBuilder;
+import org.gradle.language.nativeplatform.internal.Variant;
+import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.TargetMachine;
@@ -48,15 +51,18 @@ import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
 
 import javax.inject.Inject;
 import java.io.File;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
-import static org.gradle.language.cpp.plugins.CppApplicationPlugin.isBuildable;
-import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toBuildTypeDimension;
-import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toLinkageDimension;
-import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toTargetMachineDimension;
+import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
+import static org.gradle.language.nativeplatform.internal.Dimensions.linkageDimensions;
+import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
+import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
+import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
 
 /**
  * <p>A plugin that produces a native library from C++ source.</p>
@@ -118,37 +124,15 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
             library.getMainPublication().addVariant(binary);
         });
 
+        Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions()), project.provider(linkageDimensions(library.getLinkage())), project.provider(targetMachineDimensions(library.getTargetMachines())))));
+
+        Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, library.getBaseName(), attributesFactory));
+
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                Set<TargetMachine> targetMachines = library.getTargetMachines().get();
-                if (targetMachines.isEmpty()) {
-                    throw new IllegalArgumentException("A target machine needs to be specified for the library.");
-                }
-                library.getTargetMachines().finalizeValue();
+                library.getBinaries().addAll(identities.map(createBinaries(library)));
 
-                Set<Linkage> linkages = library.getLinkage().get();
-                if (linkages.isEmpty()) {
-                    throw new IllegalArgumentException("A linkage needs to be specified for the library.");
-                }
-                library.getLinkage().finalizeValue();
-
-                Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
-                        .withDimension(toBuildTypeDimension())
-                        .withDimension(toLinkageDimension(linkages))
-                        .withDimension(toTargetMachineDimension(targetMachines))
-                        .withBaseName(library.getBaseName())
-                        .build();
-                library.getBinaries().addAll(identities.map(it -> it.stream().filter(CppApplicationPlugin::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
-
-                    if (identity.getLinkage().equals(Linkage.SHARED)) {
-                        return library.addSharedLibrary(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                    } else if (identity.getLinkage().equals(Linkage.STATIC)) {
-                        return library.addStaticLibrary(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                    }
-                    throw new IllegalArgumentException("Invalid linkage");
-                }).collect(Collectors.toSet())));
                 identities.get().stream().filter(it -> !isBuildable(it)).forEach(variantIdentity -> {
                     // Known, but not buildable
                     library.getMainPublication().addVariant(variantIdentity);
@@ -187,6 +171,24 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
                 library.getBinaries().realizeNow();
             }
         });
+    }
+
+    private Transformer<List<CppBinary>, List<NativeVariantIdentity>> createBinaries(DefaultCppLibrary component) {
+        return new Transformer<List<CppBinary>, List<NativeVariantIdentity>>() {
+            @Override
+            public List<CppBinary> transform(List<NativeVariantIdentity> identities) {
+                return identities.stream().filter(Variants::isBuildable).map(identity -> {
+                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
+
+                    if (identity.getLinkage().equals(Linkage.SHARED)) {
+                        return component.addSharedLibrary(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                    } else if (identity.getLinkage().equals(Linkage.STATIC)) {
+                        return component.addStaticLibrary(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                    }
+                    throw new IllegalArgumentException("Invalid linkage");
+                }).collect(Collectors.toList());
+            }
+        };
     }
 
     private boolean shouldPrefer(BuildType buildType, TargetMachine targetMachine, CppLibrary library) {

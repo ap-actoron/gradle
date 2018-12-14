@@ -55,7 +55,7 @@ public class DefaultCppTestSuite extends DefaultCppComponent implements CppTestS
     public CppTestExecutable addExecutable(String variantName, NativeVariantIdentity identity, CppPlatform targetPlatform, NativeToolChainInternal toolChain, PlatformToolProvider platformToolProvider) {
         Names executableNames = Names.of(getName() + variantName + "Executable", getName() + variantName);
         CppTestExecutable testBinary = objectFactory.newInstance(DefaultCppTestExecutable.class, executableNames, getBaseName(), getCppSource(), getPrivateHeaderDirs(), getImplementationDependencies(), getTestedComponent(), targetPlatform, toolChain, platformToolProvider, identity);
-        getBinaries().add(testBinary);
+//        getBinaries().add(testBinary);
         return testBinary;
     }
 

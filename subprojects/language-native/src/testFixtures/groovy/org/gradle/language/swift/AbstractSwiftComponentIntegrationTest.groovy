@@ -16,6 +16,7 @@
 
 package org.gradle.language.swift
 
+
 import org.gradle.language.AbstractNativeLanguageComponentIntegrationTest
 import org.gradle.nativeplatform.OperatingSystemFamily
 import org.gradle.nativeplatform.fixtures.RequiresInstalledToolChain
@@ -202,16 +203,12 @@ abstract class AbstractSwiftComponentIntegrationTest extends AbstractNativeLangu
 
 
     protected String getCurrentHostOperatingSystemFamilyDsl() {
-<<<<<<< HEAD
         String osFamily = DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName()
         if (osFamily == OperatingSystemFamily.MACOS) {
             return "macOS"
         } else {
             return osFamily
         }
-=======
-        return DefaultNativePlatform.getCurrentOperatingSystem().toFamilyName() + "()"
->>>>>>> Move `TargetMachineFactory#host()` to internal API
     }
 
     abstract String getDevelopmentBinaryCompileTask()

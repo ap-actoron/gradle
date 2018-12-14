@@ -20,32 +20,34 @@ import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.Transformer;
 import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.file.FileOperations;
 import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.provider.Provider;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
-import org.gradle.language.cpp.plugins.CppApplicationPlugin;
 import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.Dimensions;
-import org.gradle.language.nativeplatform.internal.VariantIdentityBuilder;
+import org.gradle.language.nativeplatform.internal.Variant;
+import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.language.swift.SwiftApplication;
+import org.gradle.language.swift.SwiftBinary;
 import org.gradle.language.swift.SwiftExecutable;
 import org.gradle.language.swift.SwiftPlatform;
 import org.gradle.language.swift.internal.DefaultSwiftApplication;
-import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
-import java.util.Set;
+import java.util.Arrays;
+import java.util.List;
 import java.util.stream.Collectors;
 
-import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toBuildTypeDimension;
-import static org.gradle.language.cpp.plugins.CppApplicationPlugin.toTargetMachineDimension;
-import static org.gradle.language.plugins.NativeBasePlugin.setDefaultAndGetTargetMachineValues;
+import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
+import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
+import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
 
 /**
  * <p>A plugin that produces an executable from Swift source.</p>
@@ -98,27 +100,30 @@ public class SwiftApplicationPlugin implements Plugin<ProjectInternal> {
             }
         });
 
+        Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions()), project.provider(targetMachineDimensions(application.getTargetMachines())))));
+
+        Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, application.getModule(), attributesFactory));
+
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                Set<TargetMachine> targetMachines = setDefaultAndGetTargetMachineValues(application.getTargetMachines(), targetMachineFactory);
-                if (targetMachines.isEmpty()) {
-                    throw new IllegalArgumentException("A target machine needs to be specified for the application.");
-                }
-
-                Provider<Set<NativeVariantIdentity>> identities = new VariantIdentityBuilder(project, attributesFactory)
-                        .withDimension(toBuildTypeDimension())
-                        .withDimension(toTargetMachineDimension(targetMachines))
-                        .withBaseName(application.getModule())
-                        .build();
-                application.getBinaries().addAll(identities.map(it -> it.stream().filter(CppApplicationPlugin::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, identity.getTargetMachine());
-                    return application.addExecutable(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                }).collect(Collectors.toSet())));
+                application.getBinaries().addAll(identities.map(createBinaries(application)));
 
                 // Configure the binaries
                 application.getBinaries().realizeNow();
             }
         });
+    }
+
+    private Transformer<List<SwiftBinary>, List<NativeVariantIdentity>> createBinaries(DefaultSwiftApplication component) {
+        return new Transformer<List<SwiftBinary>, List<NativeVariantIdentity>>() {
+            @Override
+            public List<SwiftBinary> transform(List<NativeVariantIdentity> identities) {
+                return identities.stream().filter(Variants::isBuildable).map(identity -> {
+                    ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, identity.getTargetMachine());
+                    return component.addExecutable(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                }).collect(Collectors.toList());
+            }
+        };
     }
 }

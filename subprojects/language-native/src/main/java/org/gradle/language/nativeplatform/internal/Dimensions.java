@@ -28,7 +28,6 @@ import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.provider.Providers;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Provider;
-import org.gradle.api.provider.SetProperty;
 import org.gradle.language.cpp.CppApplication;
 import org.gradle.language.cpp.CppComponent;
 import org.gradle.language.cpp.CppLibrary;
@@ -42,13 +41,11 @@ import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
@@ -147,7 +144,7 @@ public class Dimensions<T> {
         } else if (component instanceof SwiftComponent){
             return ((SwiftComponent) component).getModule();
         }
-        throw new IllegalArgumentException("No supported");
+        throw new UnsupportedOperationException();
     }
 
     private static <I> Collection<BuildType> getBuildTypes(I component) {
@@ -187,7 +184,7 @@ public class Dimensions<T> {
                     runtimeAttributes.attribute(OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily());
                     linkage.ifPresent(it -> runtimeAttributes.attribute(LINKAGE_ATTRIBUTE, it));
 
-                    DefaultUsageContext runtimeUsageContext = new DefaultUsageContext(variantName + "-runtime", runtimeUsage, runtimeAttributes);
+                    DefaultUsageContext runtimeUsageContext = new DefaultUsageContext(variantName + "Runtime", runtimeUsage, runtimeAttributes);
 
                     DefaultUsageContext linkUsageContext = null;
                     if (linkage.isPresent()) {
@@ -199,7 +196,7 @@ public class Dimensions<T> {
                         linkAttributes.attribute(OPERATING_SYSTEM_ATTRIBUTE, targetMachine.getOperatingSystemFamily());
                         linkage.ifPresent(it -> linkAttributes.attribute(LINKAGE_ATTRIBUTE, it));
 
-                        linkUsageContext = new DefaultUsageContext(variantName + "-link", linkUsage, linkAttributes);
+                        linkUsageContext = new DefaultUsageContext(variantName + "Link", linkUsage, linkAttributes);
                     }
 
                     NativeVariantIdentity variantIdentity = new NativeVariantIdentity(variantName, baseName, group, version, buildType.isDebuggable(), buildType.isOptimized(), targetMachine, linkUsageContext, runtimeUsageContext, linkage.orElse(null));
@@ -208,100 +205,6 @@ public class Dimensions<T> {
                 }
             }
         }
-    }
-
-    public static Callable<Collection<Dimension<?>>> buildTypeDimensions() {
-        return buildTypeDimensions(BuildType.DEFAULT_BUILD_TYPES);
-    }
-
-    public static Callable<Collection<Dimension<?>>> buildTypeDimensions(Collection<BuildType> buildTypes) {
-        return () -> {
-            return buildTypes.stream().map(it -> new Dimension<BuildType>(BuildType.class, it) {
-                @Override
-                public String getName() {
-                    return createDimensionSuffix(it, buildTypes);
-                }
-
-                @Override
-                protected void initializeAttributes() {
-                    attribute(DEBUGGABLE_ATTRIBUTE, getValue().isDebuggable());
-                    attribute(OPTIMIZED_ATTRIBUTE, getValue().isOptimized());
-                }
-            }).collect(Collectors.toList());
-        };
-    }
-
-    public static Callable<Collection<Dimension<?>>> buildTypeDimensions(BuildType buildType) {
-        return buildTypeDimensions(Arrays.asList(buildType));
-    }
-
-    public static <I> Callable<Collection<Dimension<?>>> targetMachineDimensions(I component) {
-        return () -> {
-            SetProperty<TargetMachine> targetMachines = null;
-            if (component instanceof CppComponent) {
-                targetMachines = ((CppComponent) component).getTargetMachines();
-            } else if (component instanceof SwiftComponent) {
-                targetMachines = ((SwiftComponent) component).getTargetMachines();
-            } else {
-                throw new IllegalArgumentException("Component not supported");
-            }
-
-            Set<TargetMachine> values = targetMachines.get();
-            if (values.isEmpty()) {
-                String componentName = "library";
-                if (component instanceof CppApplication || component instanceof SwiftApplication) {
-                    componentName = "application";
-                }
-                throw new IllegalArgumentException(String.format("A target machine needs to be specified for the %s.", componentName));
-            }
-            targetMachines.finalizeValue();
-
-            return values.stream().map(it -> new Dimension<TargetMachine>(TargetMachine.class, it) {
-                @Override
-                public String getName() {
-                    String operatingSystemSuffix = createDimensionSuffix(it.getOperatingSystemFamily(), values.stream().map(TargetMachine::getOperatingSystemFamily).distinct().collect(Collectors.toList()));
-                    String architectureSuffix = createDimensionSuffix(it.getArchitecture(), values.stream().map(TargetMachine::getArchitecture).distinct().collect(Collectors.toList()));
-                    return operatingSystemSuffix + architectureSuffix;
-                }
-
-                @Override
-                protected void initializeAttributes() {
-                    attribute(ARCHITECTURE_ATTRIBUTE, getValue().getArchitecture());
-                    attribute(OPERATING_SYSTEM_ATTRIBUTE, getValue().getOperatingSystemFamily());
-                }
-            }).collect(Collectors.toList());
-        };
-    }
-
-    public static <I> Callable<Collection<Dimension<?>>> linkageDimensions(I component) {
-        return () -> {
-            SetProperty<Linkage> linkages = null;
-            if (component instanceof CppLibrary) {
-                linkages = ((CppLibrary) component).getLinkage();
-            } else if (component instanceof SwiftLibrary) {
-                linkages = ((SwiftLibrary) component).getLinkage();
-            } else {
-                throw new IllegalArgumentException("Component not supported");
-            }
-
-            Set<Linkage> values = linkages.get();
-            if (values.isEmpty()) {
-                throw new IllegalArgumentException("A linkage needs to be specified for the library.");
-            }
-            linkages.finalizeValue();
-
-            return values.stream().map(it -> new Dimension<Linkage>(Linkage.class, it) {
-                @Override
-                public String getName() {
-                    return createDimensionSuffix(it, values);
-                }
-
-                @Override
-                protected void initializeAttributes() {
-                    attribute(LINKAGE_ATTRIBUTE, it);
-                }
-            }).collect(Collectors.toList());
-        };
     }
 
     /**

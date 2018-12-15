@@ -34,12 +34,9 @@ import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.language.base.plugins.LifecycleBasePlugin;
-import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.BuildType;
+import org.gradle.language.nativeplatform.internal.Dimensions;
 import org.gradle.language.nativeplatform.internal.Names;
-import org.gradle.language.nativeplatform.internal.Variant;
-import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.language.swift.ProductionSwiftComponent;
 import org.gradle.language.swift.SwiftApplication;
@@ -57,6 +54,7 @@ import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 import org.gradle.nativeplatform.tasks.InstallExecutable;
 import org.gradle.nativeplatform.tasks.LinkMachOBundle;
 import org.gradle.nativeplatform.test.plugins.NativeTestingBasePlugin;
+import org.gradle.nativeplatform.test.xctest.SwiftXCTestBinary;
 import org.gradle.nativeplatform.test.xctest.SwiftXCTestBundle;
 import org.gradle.nativeplatform.test.xctest.SwiftXCTestSuite;
 import org.gradle.nativeplatform.test.xctest.internal.DefaultSwiftXCTestBinary;
@@ -79,12 +77,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
-import java.util.stream.Collectors;
 
-import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
-import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
+import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
 
 /**
  * A plugin that sets up the infrastructure for testing native binaries with XCTest test framework. It also adds conventions on top of it.
@@ -129,9 +124,13 @@ public class XCTestConventionPlugin implements Plugin<ProjectInternal> {
             }
         });
 
-        testComponent.getBinaries().whenElementKnown(binary -> {
-            testComponent.getTestBinary().set((DefaultSwiftXCTestBinary) binary);
-        });
+        testComponent.getTestBinary().convention(project.provider(() -> {
+            return testComponent.getBinaries().get().stream()
+                    .filter(SwiftXCTestBinary.class::isInstance)
+                    .map(SwiftXCTestBinary.class::cast)
+                    .findFirst()
+                    .orElse(null);
+        }));
 
         testComponent.getBinaries().whenElementKnown(DefaultSwiftXCTestBinary.class, new Action<DefaultSwiftXCTestBinary>() {
             @Override
@@ -166,35 +165,23 @@ public class XCTestConventionPlugin implements Plugin<ProjectInternal> {
                 Set<TargetMachine> targetMachines = testComponent.getTargetMachines().get();
                 validateTargetMachines(targetMachines, mainComponent != null ? mainComponent.getTargetMachines().get() : null);
 
-                Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions(BuildType.DEBUG)), project.provider(targetMachineDimensions(testComponent.getTargetMachines())))));
+                Dimensions.variants(testComponent, project, attributesFactory, variantIdentity -> {
+                    if (isBuildable(variantIdentity)) {
+                        ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, variantIdentity.getTargetMachine());
 
-                Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, testComponent.getModule(), attributesFactory));
+                        // Create test suite executable
+                        if (result.getTargetPlatform().getOperatingSystemFamily().isMacOs()) {
+                            testComponent.addBundle(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
 
-                testComponent.getBinaries().addAll(identities.map(createBinaries(testComponent)));
+                        } else {
+                            testComponent.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        }
+                    }
+                });
 
                 testComponent.getBinaries().realizeNow();
             }
         });
-    }
-
-    private Transformer<List<SwiftBinary>, List<NativeVariantIdentity>> createBinaries(DefaultSwiftXCTestSuite component) {
-        return new Transformer<List<SwiftBinary>, List<NativeVariantIdentity>>() {
-            @Override
-            public List<SwiftBinary> transform(List<NativeVariantIdentity> identities) {
-                return identities.stream().filter(Variants::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, identity.getTargetMachine());
-
-                    // Create test suite executable
-                    DefaultSwiftXCTestBinary binary;
-                    if (result.getTargetPlatform().getOperatingSystemFamily().isMacOs()) {
-                        return component.addBundle(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-
-                    } else {
-                        return component.addExecutable(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                    }
-                }).collect(Collectors.toList());
-            }
-        };
     }
 
     private void configureTestSuiteBuildingTasks(final ProjectInternal project, final DefaultSwiftXCTestBinary binary) {

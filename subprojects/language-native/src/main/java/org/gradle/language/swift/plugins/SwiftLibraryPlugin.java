@@ -20,20 +20,16 @@ import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
-import org.gradle.api.Transformer;
 import org.gradle.api.artifacts.Configuration;
 import org.gradle.api.artifacts.ConfigurationContainer;
 import org.gradle.api.attributes.Usage;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.model.ObjectFactory;
 import org.gradle.api.provider.Property;
-import org.gradle.api.provider.Provider;
-import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.ComponentWithNames;
+import org.gradle.language.nativeplatform.internal.Dimensions;
 import org.gradle.language.nativeplatform.internal.Names;
-import org.gradle.language.nativeplatform.internal.Variant;
-import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.language.swift.SwiftBinary;
 import org.gradle.language.swift.SwiftComponent;
@@ -47,21 +43,18 @@ import org.gradle.language.swift.internal.DefaultSwiftStaticLibrary;
 import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.OperatingSystemFamily;
 import org.gradle.nativeplatform.TargetMachineFactory;
+import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 import org.gradle.util.GUtil;
 
 import javax.inject.Inject;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.concurrent.Callable;
+import java.util.stream.Stream;
 
 import static org.gradle.language.cpp.CppBinary.DEBUGGABLE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.LINKAGE_ATTRIBUTE;
 import static org.gradle.language.cpp.CppBinary.OPTIMIZED_ATTRIBUTE;
-import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.nativeplatform.internal.Dimensions.linkageDimensions;
-import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
-import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
+import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
 
 /**
  * <p>A plugin that produces a shared library from Swift source.</p>
@@ -103,24 +96,50 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
         module.set(GUtil.toCamelCase(project.getName()));
 
         library.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
-        library.getBinaries().whenElementKnown(binary -> {
-            // Use the debug variant as the development binary
-            if (binary instanceof SwiftSharedLibrary && !binary.isOptimized()) {
-                library.getDevelopmentBinary().set(binary);
-            } else if (!library.getLinkage().get().contains(Linkage.SHARED) && !binary.isOptimized()) {
-                // Use the debug static library as the development binary
-                library.getDevelopmentBinary().set(binary);
+        library.getDevelopmentBinary().convention(project.provider(new Callable<SwiftBinary>() {
+            @Override
+            public SwiftBinary call() throws Exception {
+                return getDebugSharedHostStream().findFirst().orElse(
+                        getDebugStaticHostStream().findFirst().orElse(
+                                getDebugSharedStream().findFirst().orElse(
+                                        getDebugStaticStream().findFirst().orElse(null))));
             }
-        });
 
-        Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions()), project.provider(linkageDimensions(library.getLinkage())), project.provider(targetMachineDimensions(library.getTargetMachines())))));
+            private Stream<SwiftBinary> getDebugStream() {
+                return library.getBinaries().get().stream().filter(binary -> !binary.isOptimized());
+            }
 
-        Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, library.getModule(), attributesFactory));
+            private Stream<SwiftBinary> getDebugSharedStream() {
+                return getDebugStream().filter(SwiftSharedLibrary.class::isInstance);
+            }
+
+            private Stream<SwiftBinary> getDebugSharedHostStream() {
+                return getDebugSharedStream().filter(binary -> binary.getTargetPlatform().getArchitecture().equals(DefaultNativePlatform.host().getArchitecture()));
+            }
+
+            private Stream<SwiftBinary> getDebugStaticStream() {
+                return getDebugStream().filter(SwiftStaticLibrary.class::isInstance);
+            }
+
+            private Stream<SwiftBinary> getDebugStaticHostStream() {
+                return getDebugStaticStream().filter(binary -> binary.getTargetPlatform().getArchitecture().equals(DefaultNativePlatform.host().getArchitecture()));
+            }
+        }));
 
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                library.getBinaries().addAll(identities.map(createBinaries(library)));
+                Dimensions.variants(library, project, attributesFactory, variantIdentity -> {
+                    if (isBuildable(variantIdentity)) {
+                        ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, variantIdentity.getTargetMachine());
+
+                        if (variantIdentity.getLinkage().equals(Linkage.SHARED)) {
+                            library.addSharedLibrary(variantIdentity, variantIdentity.isDebuggable() && !variantIdentity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        } else {
+                            library.addStaticLibrary(variantIdentity, variantIdentity.isDebuggable() && !variantIdentity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        }
+                    }
+                });
 
                 library.getBinaries().whenElementKnown(SwiftSharedLibrary.class, new Action<SwiftSharedLibrary>() {
                     @Override
@@ -163,23 +182,5 @@ public class SwiftLibraryPlugin implements Plugin<Project> {
                 library.getBinaries().realizeNow();
             }
         });
-    }
-
-    private Transformer<List<SwiftBinary>, List<NativeVariantIdentity>> createBinaries(DefaultSwiftLibrary component) {
-        return new Transformer<List<SwiftBinary>, List<NativeVariantIdentity>>() {
-            @Override
-            public List<SwiftBinary> transform(List<NativeVariantIdentity> identities) {
-                return identities.stream().filter(Variants::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<SwiftPlatform> result = toolChainSelector.select(SwiftPlatform.class, identity.getTargetMachine());
-
-                    if (identity.getLinkage().equals(Linkage.SHARED)) {
-                        return component.addSharedLibrary(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                    } else if (identity.getLinkage().equals(Linkage.STATIC)) {
-                        return component.addStaticLibrary(identity, identity.isDebuggable() && !identity.isOptimized(), result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                    }
-                    throw new IllegalArgumentException("Invalid linkage");
-                }).collect(Collectors.toList());
-            }
-        };
     }
 }

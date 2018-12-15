@@ -28,7 +28,6 @@ import org.gradle.api.file.FileCollection;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.model.ObjectFactory;
-import org.gradle.api.provider.Provider;
 import org.gradle.api.specs.Spec;
 import org.gradle.api.tasks.TaskContainer;
 import org.gradle.api.tasks.TaskProvider;
@@ -38,14 +37,10 @@ import org.gradle.language.cpp.CppBinary;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.ProductionCppComponent;
 import org.gradle.language.cpp.internal.DefaultCppBinary;
-import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.cpp.plugins.CppBasePlugin;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.BuildType;
 import org.gradle.language.nativeplatform.internal.ConfigurableComponentWithLinkUsage;
 import org.gradle.language.nativeplatform.internal.Dimensions;
-import org.gradle.language.nativeplatform.internal.Variant;
-import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.language.swift.tasks.UnexportMainSymbol;
 import org.gradle.nativeplatform.TargetMachine;
@@ -60,14 +55,9 @@ import org.gradle.nativeplatform.test.tasks.RunTestExecutable;
 
 import javax.annotation.Nullable;
 import javax.inject.Inject;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 
-import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
-import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
-import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
+import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
 
 /**
  * A plugin that sets up the infrastructure for testing C++ binaries using a simple test executable.
@@ -116,10 +106,6 @@ public class CppUnitTestPlugin implements Plugin<ProjectInternal> {
             }
         });
 
-        testComponent.getBinaries().whenElementKnown(binary -> {
-            testComponent.getTestBinary().set((CppTestExecutable) binary);
-        });
-
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
@@ -129,20 +115,16 @@ public class CppUnitTestPlugin implements Plugin<ProjectInternal> {
                 Set<TargetMachine> targetMachines = testComponent.getTargetMachines().get();
                 validateTargetMachines(targetMachines, mainComponent != null ? mainComponent.getTargetMachines().get() : null);
 
-                Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions(BuildType.DEBUG)), project.provider(targetMachineDimensions(testComponent.getTargetMachines())))));
+                Dimensions.variants(testComponent, project, attributesFactory, variantIdentity -> {
+                    if (isBuildable(variantIdentity)) {
+                        ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, variantIdentity.getTargetMachine());
+                        CppTestExecutable testExecutable = testComponent.addExecutable(variantIdentity.getName(), variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
 
-                Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, testComponent.getBaseName(), attributesFactory));
-
-                testComponent.getBinaries().addAll(identities.map(createBinaries(testComponent)));
+                        testComponent.getTestBinary().set(testExecutable);
+                    }
+                });
 
                 // TODO: Publishing for test executable?
-
-                // There is no main component, and none of our target platforms match the current platform, so we just pick the last one
-//                if (mainComponent == null && !testComponent.getTestBinary().isPresent()) {
-//                    if (lastExecutable != null) {
-//                        testComponent.getTestBinary().set(lastExecutable);
-//                    }
-//                }
 
                 final TaskContainer tasks = project.getTasks();
                 testComponent.getBinaries().whenElementKnown(DefaultCppTestExecutable.class, new Action<DefaultCppTestExecutable>() {
@@ -223,18 +205,6 @@ public class CppUnitTestPlugin implements Plugin<ProjectInternal> {
                 testComponent.getBinaries().realizeNow();
             }
         });
-    }
-
-    private Transformer<List<CppBinary>, List<NativeVariantIdentity>> createBinaries(DefaultCppTestSuite component) {
-        return new Transformer<List<CppBinary>, List<NativeVariantIdentity>>() {
-            @Override
-            public List<CppBinary> transform(List<NativeVariantIdentity> identities) {
-                return identities.stream().filter(Variants::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
-                    return component.addExecutable(identity.getName(), identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                }).collect(Collectors.toList());
-            }
-        };
     }
 
     private boolean isTestedBinary(DefaultCppTestExecutable testExecutable, ProductionCppComponent mainComponent, CppBinary testedBinary) {

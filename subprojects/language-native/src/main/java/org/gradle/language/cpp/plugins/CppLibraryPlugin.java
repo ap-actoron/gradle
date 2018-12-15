@@ -37,32 +37,30 @@ import org.gradle.language.cpp.CppBinary;
 import org.gradle.language.cpp.CppLibrary;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.CppSharedLibrary;
+import org.gradle.language.cpp.CppStaticLibrary;
 import org.gradle.language.cpp.internal.DefaultCppLibrary;
 import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
 import org.gradle.language.nativeplatform.internal.BuildType;
-import org.gradle.language.nativeplatform.internal.Variant;
+import org.gradle.language.nativeplatform.internal.Dimensions;
 import org.gradle.language.nativeplatform.internal.Variants;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.nativeplatform.Linkage;
 import org.gradle.nativeplatform.TargetMachine;
 import org.gradle.nativeplatform.TargetMachineFactory;
 import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
+import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
 import java.io.File;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
-import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.nativeplatform.internal.Dimensions.linkageDimensions;
-import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
 import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
-import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
 
 /**
  * <p>A plugin that produces a native library from C++ source.</p>
@@ -110,32 +108,56 @@ public class CppLibraryPlugin implements Plugin<ProjectInternal> {
         library.getBaseName().set(project.getName());
 
         library.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
-        library.getDevelopmentBinary().convention(project.provider(() -> {
-            return library.getBinaries().get().stream()
-                    .filter(binary -> binary instanceof CppSharedLibrary && !binary.isOptimized())
-                    .findFirst()
-                    .orElse(library.getBinaries().get().stream()
-                            .filter(binary -> !library.getLinkage().get().contains(Linkage.SHARED) && !binary.isOptimized())
-                            .findFirst()
-                            .orElse(null));
+        library.getDevelopmentBinary().convention(project.provider(new Callable<CppBinary>() {
+            @Override
+            public CppBinary call() throws Exception {
+                return getDebugSharedHostStream().findFirst().orElse(
+                        getDebugStaticHostStream().findFirst().orElse(
+                                getDebugSharedStream().findFirst().orElse(
+                                        getDebugStaticStream().findFirst().orElse(null))));
+            }
+
+            private Stream<CppBinary> getDebugStream() {
+                return library.getBinaries().get().stream().filter(binary -> !binary.isOptimized());
+            }
+
+            private Stream<CppBinary> getDebugSharedStream() {
+                return getDebugStream().filter(CppSharedLibrary.class::isInstance);
+            }
+
+            private Stream<CppBinary> getDebugSharedHostStream() {
+                return getDebugSharedStream().filter(binary -> binary.getTargetPlatform().getArchitecture().equals(DefaultNativePlatform.host().getArchitecture()));
+            }
+
+            private Stream<CppBinary> getDebugStaticStream() {
+                return getDebugStream().filter(CppStaticLibrary.class::isInstance);
+            }
+
+            private Stream<CppBinary> getDebugStaticHostStream() {
+                return getDebugStaticStream().filter(binary -> binary.getTargetPlatform().getArchitecture().equals(DefaultNativePlatform.host().getArchitecture()));
+            }
         }));
 
         library.getBinaries().whenElementKnown(binary -> {
             library.getMainPublication().addVariant(binary);
         });
 
-        Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions()), project.provider(linkageDimensions(library.getLinkage())), project.provider(targetMachineDimensions(library.getTargetMachines())))));
-
-        Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, library.getBaseName(), attributesFactory));
-
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                library.getBinaries().addAll(identities.map(createBinaries(library)));
+                Dimensions.variants(library, project, attributesFactory, variantIdentity -> {
+                    if (isBuildable(variantIdentity)) {
+                        ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, variantIdentity.getTargetMachine());
 
-                identities.get().stream().filter(it -> !isBuildable(it)).forEach(variantIdentity -> {
-                    // Known, but not buildable
-                    library.getMainPublication().addVariant(variantIdentity);
+                        if (variantIdentity.getLinkage().equals(Linkage.SHARED)) {
+                            library.addSharedLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        } else {
+                            library.addStaticLibrary(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        }
+                    } else {
+                        // Known, but not buildable
+                        library.getMainPublication().addVariant(variantIdentity);
+                    }
                 });
 
                 final Configuration apiElements = library.getApiElements();

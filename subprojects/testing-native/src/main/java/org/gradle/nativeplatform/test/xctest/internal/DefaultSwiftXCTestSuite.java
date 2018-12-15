@@ -64,13 +64,13 @@ public class DefaultSwiftXCTestSuite extends DefaultSwiftComponent implements Sw
 
     public SwiftXCTestExecutable addExecutable(NativeVariantIdentity identity, SwiftPlatform targetPlatform, NativeToolChainInternal toolChain, PlatformToolProvider platformToolProvider) {
         SwiftXCTestExecutable result = objectFactory.newInstance(DefaultSwiftXCTestExecutable.class, Names.of(getName() + "Executable", getName()), getModule(), false, getSwiftSource(), getImplementationDependencies(), targetPlatform, toolChain, platformToolProvider, identity);
-//        getBinaries().add(result);
+        getBinaries().add(result);
         return result;
     }
 
     public SwiftXCTestBundle addBundle(NativeVariantIdentity identity, SwiftPlatform targetPlatform, NativeToolChainInternal toolChain, PlatformToolProvider platformToolProvider) {
         SwiftXCTestBundle result = objectFactory.newInstance(DefaultSwiftXCTestBundle.class, Names.of(getName() + "Executable", getName()), getModule(), false, getSwiftSource(), getImplementationDependencies(), targetPlatform, toolChain, platformToolProvider, identity);
-//        getBinaries().add(result);
+        getBinaries().add(result);
         return result;
     }
 

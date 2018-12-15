@@ -81,12 +81,13 @@ public class DefaultSwiftLibrary extends DefaultSwiftComponent implements SwiftL
 
     public SwiftStaticLibrary addStaticLibrary(NativeVariantIdentity identity, boolean testable, SwiftPlatform targetPlatform, NativeToolChainInternal toolChain, PlatformToolProvider platformToolProvider) {
         SwiftStaticLibrary result = objectFactory.newInstance(DefaultSwiftStaticLibrary.class, getNames().append(identity.getName()), getModule(), testable, getSwiftSource(), getImplementationDependencies(), targetPlatform, toolChain, platformToolProvider, identity);
-//        getBinaries().add(result);
+        getBinaries().add(result);
         return result;
     }
 
     public SwiftSharedLibrary addSharedLibrary(NativeVariantIdentity identity, boolean testable, SwiftPlatform targetPlatform, NativeToolChainInternal toolChain, PlatformToolProvider platformToolProvider) {
         SwiftSharedLibrary result = objectFactory.newInstance(DefaultSwiftSharedLibrary.class, getNames().append(identity.getName()), getModule(), testable, getSwiftSource(), configurations, getImplementationDependencies(), targetPlatform, toolChain, platformToolProvider, identity);
+        getBinaries().add(result);
         return result;
     }
 

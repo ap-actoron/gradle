@@ -20,35 +20,24 @@ import org.gradle.api.Action;
 import org.gradle.api.Incubating;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
-import org.gradle.api.Transformer;
 import org.gradle.api.internal.attributes.ImmutableAttributesFactory;
 import org.gradle.api.internal.project.ProjectInternal;
 import org.gradle.api.model.ObjectFactory;
-import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.ProviderFactory;
 import org.gradle.language.cpp.CppApplication;
-import org.gradle.language.cpp.CppBinary;
 import org.gradle.language.cpp.CppExecutable;
 import org.gradle.language.cpp.CppPlatform;
 import org.gradle.language.cpp.internal.DefaultCppApplication;
-import org.gradle.language.cpp.internal.NativeVariantIdentity;
 import org.gradle.language.internal.NativeComponentFactory;
-import org.gradle.language.nativeplatform.internal.Variant;
-import org.gradle.language.nativeplatform.internal.Variants;
+import org.gradle.language.nativeplatform.internal.Dimensions;
 import org.gradle.language.nativeplatform.internal.toolchains.ToolChainSelector;
 import org.gradle.nativeplatform.TargetMachineFactory;
-import org.gradle.nativeplatform.internal.DefaultTargetMachineFactory;
+import org.gradle.nativeplatform.platform.internal.DefaultNativePlatform;
 
 import javax.inject.Inject;
-import java.util.Arrays;
-import java.util.List;
-import java.util.stream.Collectors;
 
-import static org.gradle.language.nativeplatform.internal.Dimensions.buildTypeDimensions;
 import static org.gradle.language.nativeplatform.internal.Dimensions.getDefaultTargetMachines;
-import static org.gradle.language.nativeplatform.internal.Dimensions.targetMachineDimensions;
 import static org.gradle.language.nativeplatform.internal.Variants.isBuildable;
-import static org.gradle.language.nativeplatform.internal.Variants.toVariantIdentity;
 
 /**
  * <p>A plugin that produces a native application from C++ source.</p>
@@ -91,47 +80,42 @@ public class CppApplicationPlugin implements Plugin<ProjectInternal> {
         application.getBaseName().set(project.getName());
 
         application.getTargetMachines().convention(getDefaultTargetMachines(targetMachineFactory));
-        application.getBinaries().whenElementKnown(CppExecutable.class, binary -> {
+        application.getDevelopmentBinary().convention(project.provider(() -> {
             // Use the debug variant as the development binary
             // Prefer the host architecture, if present, else use the first architecture specified
-            if (!binary.isOptimized() && (binary.getTargetPlatform().getArchitecture().equals(((DefaultTargetMachineFactory)targetMachineFactory).host().getArchitecture()) || !application.getDevelopmentBinary().isPresent())) {
-                application.getDevelopmentBinary().set(binary);
-            }
-        });
+            return application.getBinaries().get().stream()
+                    .filter(CppExecutable.class::isInstance)
+                    .map(CppExecutable.class::cast)
+                    .filter(binary -> !binary.isOptimized() && binary.getTargetPlatform().getArchitecture().equals(DefaultNativePlatform.host().getArchitecture()))
+                    .findFirst()
+                    .orElse(application.getBinaries().get().stream()
+                            .filter(CppExecutable.class::isInstance)
+                            .map(CppExecutable.class::cast)
+                            .filter(binary -> !binary.isOptimized())
+                            .findFirst()
+                            .orElse(null));
+        }));
 
         application.getBinaries().whenElementKnown(binary -> {
             application.getMainPublication().addVariant(binary);
         });
 
-        Provider<List<Variant>> variants = project.provider(Variants.of(Arrays.asList(project.provider(buildTypeDimensions()), project.provider(targetMachineDimensions(application.getTargetMachines())))));
-
-        Provider<List<NativeVariantIdentity>> identities = variants.map(toVariantIdentity(project, application.getBaseName(), attributesFactory));
-
         project.afterEvaluate(new Action<Project>() {
             @Override
             public void execute(final Project project) {
-                application.getBinaries().addAll(identities.map(createBinaries(application)));
-
-                identities.get().stream().filter(it -> !isBuildable(it)).forEach(variantIdentity -> {
-                    // Known, but not buildable
-                    application.getMainPublication().addVariant(variantIdentity);
+                Dimensions.variants(application, project, attributesFactory, variantIdentity -> {
+                    if (isBuildable(variantIdentity)) {
+                        ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, variantIdentity.getTargetMachine());
+                        application.addExecutable(variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                    } else {
+                        // Known, but not buildable
+                        application.getMainPublication().addVariant(variantIdentity);
+                    }
                 });
 
                 // Configure the binaries
                 application.getBinaries().realizeNow();
             }
         });
-    }
-
-    private Transformer<List<CppBinary>, List<NativeVariantIdentity>> createBinaries(DefaultCppApplication component) {
-        return new Transformer<List<CppBinary>, List<NativeVariantIdentity>>() {
-            @Override
-            public List<CppBinary> transform(List<NativeVariantIdentity> identities) {
-                return identities.stream().filter(Variants::isBuildable).map(identity -> {
-                    ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, identity.getTargetMachine());
-                    return component.addExecutable(identity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
-                }).collect(Collectors.toList());
-            }
-        };
     }
 }

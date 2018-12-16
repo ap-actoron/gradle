@@ -166,16 +166,13 @@ public class Dimensions<T> {
                     Usage linkUsage = objectFactory.named(Usage.class, Usage.NATIVE_LINK);
 
                     List<String> variantNameToken = Lists.newArrayList();
-                    variantNameToken.add(createDimensionSuffix(buildType, buildTypes));
+                    // FIXME: Always build type name to keep parity with previous Gradle version in tooling API
+                    variantNameToken.add(buildType.getName());
                     linkage.ifPresent(it -> variantNameToken.add(createDimensionSuffix(it, linkages)));
                     variantNameToken.add(createDimensionSuffix(targetMachine.getOperatingSystemFamily(), targetMachines.stream().map(TargetMachine::getOperatingSystemFamily).collect(Collectors.toSet())));
                     variantNameToken.add(createDimensionSuffix(targetMachine.getArchitecture(), targetMachines.stream().map(TargetMachine::getArchitecture).collect(Collectors.toSet())));
 
                     String variantName = StringUtils.uncapitalize(String.join("", variantNameToken));
-                    // TODO: Default to build type name when no variant name to keep parity with previous Gradle version in tooling API
-                    if (variantName.isEmpty()) {
-                        variantName = buildType.getName();
-                    }
 
                     Provider<String> group = project.provider(() -> project.getGroup().toString());
                     Provider<String> version = project.provider(() -> project.getVersion().toString());

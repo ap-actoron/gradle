@@ -118,7 +118,8 @@ public class CppUnitTestPlugin implements Plugin<ProjectInternal> {
                 Dimensions.variants(testComponent, project, attributesFactory, variantIdentity -> {
                     if (isBuildable(variantIdentity)) {
                         ToolChainSelector.Result<CppPlatform> result = toolChainSelector.select(CppPlatform.class, variantIdentity.getTargetMachine());
-                        CppTestExecutable testExecutable = testComponent.addExecutable(variantIdentity.getName(), variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
+                        // TODO: Removing `debug` from variant name to keep parity with previous Gradle version in tooling models
+                        CppTestExecutable testExecutable = testComponent.addExecutable(variantIdentity.getName().replace("debug", ""), variantIdentity, result.getTargetPlatform(), result.getToolChain(), result.getPlatformToolProvider());
 
                         testComponent.getTestBinary().set(testExecutable);
                     }

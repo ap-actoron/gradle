@@ -172,6 +172,10 @@ public class Dimensions<T> {
                     variantNameToken.add(createDimensionSuffix(targetMachine.getArchitecture(), targetMachines.stream().map(TargetMachine::getArchitecture).collect(Collectors.toSet())));
 
                     String variantName = StringUtils.uncapitalize(String.join("", variantNameToken));
+                    // TODO: Default to build type name when no variant name to keep parity with previous Gradle version in tooling API
+                    if (variantName.isEmpty()) {
+                        variantName = buildType.getName();
+                    }
 
                     Provider<String> group = project.provider(() -> project.getGroup().toString());
                     Provider<String> version = project.provider(() -> project.getVersion().toString());

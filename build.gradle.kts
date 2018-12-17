@@ -44,6 +44,32 @@ defaultTasks("assemble")
 
 base.archivesBaseName = "gradle"
 
+distributedBuild {
+    pipeline {
+        val linuxJava11  = buildEnvironment("Linux amd64", "OpenJDK 11")
+        val linuxJava8   = buildEnvironment("Linux amd64", "OpenJDK 8")
+        val windowsJava8 = buildEnvironment("Windows 7 amd64", "Oracle JDK 8")
+
+        val compileAll =   buildType("compileAllBuild", "compileAll", splitBySubproject = false, environmentSpecific = false)
+        val sanityCheck =  buildType("sanityCheck", listOf(":allIncubationReportsZip"),
+            splitBySubproject = false, environmentSpecific = false)// ":architectureTest:test" ":distributions:checkBinaryCompatibility", "codeQuality", ":docs:checkstyleApi", ":docs:check", ":docs:javadocAll"
+        val quickTest =    buildType("quickTest", listOf("integTest", "crossVersionTest"))
+
+        pipeline {
+            stage("Compile", "Compile all code as preparation for everything else") {
+                invocation(compileAll, linuxJava11)
+            }
+            stage("Quick Feedback Linux", "Run checks and functional tests (embedded executer, Linux)") {
+                invocation(sanityCheck, linuxJava11)
+                invocation(quickTest, linuxJava11)
+            }
+            stage("Quick Feedback", "Run performance and functional tests (against distribution)") {
+                invocation(quickTest, windowsJava8)
+            }
+        }
+    }
+}
+
 buildTypes {
     create("compileAllBuild") {
         tasks(":createBuildReceipt", "compileAll")
